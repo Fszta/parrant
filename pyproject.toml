@@ -49,9 +49,18 @@ mkdocs-click = ">=0.8.1,<0.9.0"
 requests = ">=2.32.0,<3.0.0"
 types-requests = ">=2.32.0,<3.0.0"
 types-pyyaml = "^6.0.12.20260815"
+httpx = ">=0.27.0,<1.0.0"
 
 [tool.pytest.ini_options]
 pythonpath = ["."]
+# Fail tests on any deprecation (e.g. starlette's old TemplateResponse convention, removed
+# in 1.6 — issue #139), instead of warning silently until the upstream removal ships to end
+# users. If a third-party-internal deprecation we can't fix starts breaking CI, add a scoped
+# "ignore:<message>::<module>" entry below the error rules rather than loosening them.
+filterwarnings = [
+    "error::DeprecationWarning",
+    "error::PendingDeprecationWarning",
+]
 
 [tool.black]
 line-length = 100

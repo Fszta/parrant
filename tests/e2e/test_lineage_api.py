@@ -328,6 +328,21 @@ def test_snapshot_api_support(dbt_artifacts: Dict[str, Any], server_port: int) -
             pytest.skip(f"Could not test snapshot lineage endpoint: {e}")
 
 
+def test_home_page_renders(dbt_artifacts: Dict[str, Any], server_port: int) -> None:
+    """The root page must render — it is the only template-rendering route, so API-only
+    coverage misses it entirely (issue #139 shipped a server that answered every /api/*
+    call but 500'd on the page users actually open)."""
+    catalog_path = Path(dbt_artifacts["catalog_path"])
+    manifest_path = Path(dbt_artifacts["manifest_path"])
+
+    with lineage_server(catalog_path, manifest_path, server_port) as port:
+        response = requests.get(f"http://127.0.0.1:{port}/", timeout=10)
+
+        assert response.status_code == 200, f"GET / returned {response.status_code}"
+        assert "text/html" in response.headers.get("content-type", "")
+        assert "<title>Parrant</title>" in response.text
+
+
 def test_coverage_endpoint(dbt_artifacts: Dict[str, Any], server_port: int) -> None:
     """Verify /api/coverage exposes the artifact coverage block to the explorer UI."""
     catalog_path = Path(dbt_artifacts["catalog_path"])
