@@ -1,4 +1,5 @@
 import pytest
+from fastapi.testclient import TestClient
 from parrant.lineage.display.html.explore import LineageExplorer
 from parrant.artifacts.registry import ModelRegistry
 from parrant.lineage.service import LineageService
@@ -62,6 +63,27 @@ def test_html_display_nodes(lineage_service, registry):
     assert (
         start_model_name in models_in_graph
     ), f"Starting model '{start_model_name}' not found in graph nodes"
+
+
+def test_home_route_renders_explorer_page(lineage_service):
+    """GET / — the only route that renders a Jinja2 template — returns the explorer page.
+
+    Guards the ``TemplateResponse`` calling convention: starlette 1.6 removed the legacy
+    ``(name, context-with-request)`` shim, turning every page load into
+    ``TypeError: unhashable type: 'dict'`` (issue #139). Runs in-process so the
+    DeprecationWarning-as-error filter in pyproject.toml catches a deprecated calling
+    style while it is still just a warning on older starlette."""
+    explorer = LineageExplorer(host="127.0.0.1", port=8000)
+    explorer.set_lineage_service(lineage_service)
+
+    with TestClient(explorer.app) as client:
+        response = client.get("/")
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/html")
+    assert "<title>Parrant</title>" in response.text
+    # explore_mode context reached the template
+    assert "explore-panel" in response.text
 
 
 def test_lineage_includes_impact_summary(lineage_service):
