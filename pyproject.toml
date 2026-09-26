@@ -1,6 +1,6 @@
 [project]
 name = "parrant"
-version = "0.21.0"
+version = "0.21.1"
 description = "Parrant — the offline pre-merge column-impact gate for dbt: parry the breaking changes, warrant the safe ones"
 authors = [
     {name = "Fszta"}

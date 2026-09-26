@@ -1,3 +1,9 @@
+## [0.21.1](https://github.com/Fszta/parrant/compare/v0.21.0...v0.21.1) (2026-09-26)
+
+### Bug Fixes
+
+* **explorer:** use starlette's request-first TemplateResponse convention ([7661a20](https://github.com/Fszta/parrant/commit/7661a20f43d9d7e3fab65052761eab0358fc55c0))
+
 ## [0.21.0](https://github.com/Fszta/parrant/compare/v0.20.0...v0.21.0) (2026-09-02)
 
 ### Features
