@@ -991,6 +991,40 @@ class BacktestPointResult(BaseModel):
     blast_radius: int = 0
     fired: List[BacktestFiredHit] = Field(default_factory=list)
     sample_reach: List[str] = Field(default_factory=list)
+    # --- selection measurement (pure observation of the per-point Selection block) ---
+    # ``None`` for points replayed without a selection (a failed replay, or a service that
+    # produced no selection block); such points are excluded from the aggregate stats.
+    selection_widened: Optional[bool] = None  # Selection.widened_to_all_reachable
+    skippable_models_count: Optional[int] = None  # len(Selection.skippable_models)
+    # ResolutionSummary.rebuild_forced_by_nonresolution for this point (rebuilds forced
+    # because parrant could not resolve the model, not by a proven reaching change).
+    rebuild_forced_by_nonresolution: Optional[int] = None
+    # ResolutionSummary.top_reasons flattened to {reason -> count} for cross-point aggregation.
+    resolution_reasons: Dict[str, int] = Field(default_factory=dict)
+
+
+class BacktestSelectionStats(BaseModel):
+    """Aggregate selection widen-rate statistics across the replayed range (measurement only).
+
+    Answers "how often does the rebuild selection give up and widen to every reachable model,
+    and why?" over the whole backtest — pure aggregation of the per-point ``Selection`` /
+    ``ResolutionSummary`` facts; it changes no selection or gating behavior.
+    """
+
+    # Points that carried a selection block (the denominator of every rate below).
+    points_with_selection: int = 0
+    # Points where ``widened_to_all_reachable`` was true — the safe over-build fired.
+    widened_points: int = 0
+    # ``widened_points / points_with_selection`` as a percentage (1 decimal; 0.0 when empty).
+    widen_rate_pct: float = 0.0
+    # Median ``len(skippable_models)`` across points with a selection (0.0 when empty).
+    median_skippable_models: float = 0.0
+    # Sum of per-point ``rebuild_forced_by_nonresolution`` — total rebuilds forced because a
+    # model could not be resolved rather than by a proven reaching change.
+    rebuild_forced_by_nonresolution_total: int = 0
+    # Cross-point roll-up of the per-point resolution reasons, ranked by frequency: the
+    # widening/forcing-reason backlog (which resolution gaps drive the widen rate).
+    top_reasons: List[ResolutionReasonCount] = Field(default_factory=list)
 
 
 class BacktestReport(BaseModel):
@@ -1015,6 +1049,9 @@ class BacktestReport(BaseModel):
     fidelity_note: str = ""
     warnings: List[str] = Field(default_factory=list)
     baseline_delta: Optional[Dict[str, Any]] = None
+    # Aggregate selection widen-rate statistics (measurement only). ``None`` when no replayed
+    # point carried a selection block, so an absent surface is never mistaken for a zero rate.
+    selection_stats: Optional[BacktestSelectionStats] = None
 
 
 # ===========================================================================

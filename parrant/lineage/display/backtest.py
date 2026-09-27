@@ -11,9 +11,9 @@ skipped) so a low-coverage run is never mistaken for a clean pass. JSON output i
 
 from __future__ import annotations
 
-from typing import List
+from typing import List, Optional
 
-from parrant.models.schema import BacktestReport, BacktestRuleStat
+from parrant.models.schema import BacktestReport, BacktestRuleStat, BacktestSelectionStats
 
 
 def _rule_flag(stat: BacktestRuleStat) -> str:
@@ -36,6 +36,28 @@ def _totals_line(report: BacktestReport) -> str:
     )
 
 
+def _selection_lines(stats: Optional[BacktestSelectionStats]) -> List[str]:
+    """The selection widen-rate block (both renderers), or ``[]`` when no point carried one.
+
+    Measurement surface only: how often the rebuild selection widened to every reachable model,
+    the median skippable count, and the ranked resolution reasons forcing the widening.
+    """
+    if stats is None:
+        return []
+    lines = [
+        (
+            f"Selection: widened to all-reachable in {stats.widened_points}/"
+            f"{stats.points_with_selection} point(s) ({stats.widen_rate_pct}%); "
+            f"median skippable models {stats.median_skippable_models}; "
+            f"rebuilds forced by non-resolution: {stats.rebuild_forced_by_nonresolution_total}"
+        )
+    ]
+    if stats.top_reasons:
+        ranked = ", ".join(f"{entry.reason} ({entry.count})" for entry in stats.top_reasons)
+        lines.append(f"Top widening/forcing reasons: {ranked}")
+    return lines
+
+
 def render_backtest_table(report: BacktestReport) -> str:
     """A fixed-width text table for terminals — the per-rule aggregate + totals + fidelity note."""
     lines: List[str] = []
@@ -44,6 +66,8 @@ def render_backtest_table(report: BacktestReport) -> str:
         lines.append(f"Range: {report.base}..{report.head}")
     lines.append("")
     lines.append(_totals_line(report))
+    for selection_line in _selection_lines(report.selection_stats):
+        lines.append(selection_line)
     lines.append("")
 
     if not report.rule_stats:
@@ -82,6 +106,8 @@ def render_backtest_markdown(report: BacktestReport) -> str:
     if report.base or report.head:
         lines.append(f"- **Range:** `{report.base}..{report.head}`")
     lines.append(f"- {_totals_line(report)}")
+    for selection_line in _selection_lines(report.selection_stats):
+        lines.append(f"- {selection_line}")
     lines.append("")
 
     lines.append(
