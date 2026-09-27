@@ -134,6 +134,11 @@ def test_fail_on_policy_no_change_exits_zero(dbt_artifacts):
 
 
 _WARN_PII_POLICY = str(REPO_ROOT / "tests" / "resources" / "policies" / "warn_pii_fail_closed.yml")
+_WARN_PII_KNOB_POLICY = str(
+    REPO_ROOT / "tests" / "resources" / "policies" / "warn_pii_fire_on_unknown.yml"
+)
+
+
 def test_warn_policy_unknown_exit_code_invariant(dbt_artifacts, mutated_base):
     """Issue #124 exit-code invariance: a warn-only fail_closed policy whose rule stays UNKNOWN
     exits 0 under `--fail-on policy` — exactly as before the unproven telemetry (a warn-only
@@ -204,3 +209,51 @@ def test_warn_policy_unknown_surfaces_unproven_in_report(dbt_artifacts, mutated_
     assert verdict["decision"] == "allow"
     assert verdict["unproven_count"] >= 1
     assert any(rec["rule_id"] == "warn-pii-guard" for rec in verdict["unproven"])
+
+
+def test_warn_policy_knob_on_fires_warn_and_still_exits_zero(dbt_artifacts, mutated_base):
+    """With `warn_rules_fire_on_unknown: true` the warn rule FIRES on the UNKNOWN leaf as a
+    normal warn hit marked fired_on_unknown — and the gate still exits 0 under
+    `--fail-on policy` (warn is not block)."""
+    json_result = _run(
+        [
+            "--manifest",
+            str(dbt_artifacts["manifest_path"]),
+            "--catalog",
+            str(dbt_artifacts["catalog_path"]),
+            "--base-manifest",
+            mutated_base["manifest"],
+            "--base-catalog",
+            mutated_base["catalog"],
+            "--policy",
+            _WARN_PII_KNOB_POLICY,
+            "--format",
+            "json",
+        ]
+    )
+    assert json_result.returncode == 0, f"stderr={json_result.stderr}"
+    verdict = json.loads(json_result.stdout)["policy_verdict"]
+    assert verdict["decision"] == "warn"
+    hit = next(h for h in verdict["hits"] if h["rule_id"] == "warn-pii-guard")
+    assert hit["fired_on_unknown"] is True
+    assert hit["unknown_cause"] == "missing"
+    assert verdict["unproven_count"] == 0
+
+    gate_result = _run(
+        [
+            "--manifest",
+            str(dbt_artifacts["manifest_path"]),
+            "--catalog",
+            str(dbt_artifacts["catalog_path"]),
+            "--base-manifest",
+            mutated_base["manifest"],
+            "--base-catalog",
+            mutated_base["catalog"],
+            "--ci",
+            "--fail-on",
+            "policy",
+            "--policy",
+            _WARN_PII_KNOB_POLICY,
+        ]
+    )
+    assert gate_result.returncode == 0, f"stdout={gate_result.stdout}\nstderr={gate_result.stderr}"

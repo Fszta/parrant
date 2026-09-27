@@ -26,9 +26,10 @@ genuine type error is never masked by a fail-open missing-meta default. A predic
 UNKNOWN at the rule level is resolved by the matching fail-safe policy: a *blocking* rule under
 ``fail_closed`` fires (bias toward safety); a non-blocking rule does not (never manufacture a
 spurious warning) — but the suppression is SURFACED as ``PolicyVerdict.unproven`` telemetry so
-an all-warn pilot policy never understates what block mode will do (issue #124). ``fail_open``
-never fires on UNKNOWN; ``skip`` drops the rule for that subject (recorded in
-``skipped_missing_meta``).
+an all-warn pilot policy never understates what block mode will do (issue #124); the opt-in
+``defaults.warn_rules_fire_on_unknown`` knob makes the non-blocking rule fire too, at its own
+severity. ``fail_open`` never fires on UNKNOWN; ``skip`` drops the rule for that subject
+(recorded in ``skipped_missing_meta``).
 """
 
 from __future__ import annotations
@@ -965,8 +966,10 @@ class PolicyEngine:
           * ``UNKNOWN_ERROR`` (operator/type mismatch) -> ``on_error``.
         Each falls back rule -> policy default. The chosen policy then resolves the leaf:
           * fail_closed: a *blocking* rule fires (bias toward safety); a non-blocking rule does
-            not (never manufacture a spurious warning) — the asymmetry from. A suppressed
-            non-blocking firing is surfaced as ``PolicyVerdict.unproven`` telemetry (issue #124).
+            not (never manufacture a spurious warning) — the asymmetry from — UNLESS the
+            policy-level ``defaults.warn_rules_fire_on_unknown`` knob is on, in which case the
+            non-blocking rule fires too, at its own declared severity (issue #124). A suppressed
+            non-blocking firing (knob off) is surfaced as ``PolicyVerdict.unproven`` telemetry.
           * fail_open: never fires on UNKNOWN.
           * skip: returns None (drop the rule for this subject; counted for honesty).
         """
@@ -979,8 +982,8 @@ class PolicyEngine:
             return None
         if policy is MissingMetaPolicy.FAIL_OPEN:
             return False
-        # fail_closed: blocking rules fire on UNKNOWN, non-blocking rules do not.
-        return _is_blocking(rule)
+        # fail_closed: blocking rules fire on UNKNOWN; non-blocking rules only under the knob.
+        return _is_blocking(rule) or self._policy.defaults.warn_rules_fire_on_unknown
 
     def _unknown_policy(self, result: Tri, rule: Rule) -> MissingMetaPolicy:
         """The fail-safe knob that governs this UNKNOWN, per its cause (rule -> policy default)."""

@@ -1413,6 +1413,41 @@ def test_unproven_not_recorded_on_proven_false():
     assert verdict.unproven == []
 
 
+def test_warn_rules_fire_on_unknown_knob_fires_warn_hit():
+    """The opt-in knob (defaults.warn_rules_fire_on_unknown) makes fail_closed apply to
+    non-blocking rules too: the warn rule fires on UNKNOWN as a normal warn hit marked
+    fired_on_unknown, and nothing lands in unproven."""
+    policy = _warn_pii_policy(
+        {"on_missing_meta": "fail_closed", "warn_rules_fire_on_unknown": True}
+    )
+    registry = FakeRegistry(model_meta={"m": {}})
+    verdict = _engine(policy, registry, _impact(_resolved("m", "c"))).evaluate(
+        [_change("m", "c", semantic=SemanticChangeKind.MEANING_CHANGED)]
+    )
+    assert verdict.decision is GateDecision.WARN
+    assert verdict.fired_rules == 1
+    (hit,) = verdict.hits
+    assert hit.rule_id == "warn-pii"
+    assert hit.decision is GateDecision.WARN
+    assert hit.fired_on_unknown is True
+    assert hit.unknown_cause == "missing"
+    assert verdict.unproven_count == 0
+    assert verdict.unproven == []
+
+
+def test_warn_rules_fire_on_unknown_knob_never_escalates_to_block():
+    """The knob only fires the rule at its declared severity — the gate decision can become
+    WARN, never BLOCK, so `--fail-on policy` exit behavior is untouched."""
+    policy = _warn_pii_policy(
+        {"on_missing_meta": "fail_closed", "warn_rules_fire_on_unknown": True}
+    )
+    registry = FakeRegistry(model_meta={"m": {}})
+    verdict = _engine(policy, registry, _impact(_resolved("m", "c"))).evaluate(
+        [_change("m", "c", semantic=SemanticChangeKind.MEANING_CHANGED)]
+    )
+    assert not verdict.blocks()
+
+
 def test_knob_off_verdict_identical_except_unproven():
     """Default-off regression lock: apart from the additive unproven telemetry, the verdict is
     identical to the pre-#124 one (decision, hits, counters)."""

@@ -838,6 +838,13 @@ class PolicyDefaults(BaseModel):
     on_error: MissingMetaPolicy = MissingMetaPolicy.FAIL_CLOSED
     on_meaning_changed: Optional[GateDecision] = None
     on_indeterminate: Optional[GateDecision] = None
+    # Opt-in (default OFF, byte-identical behavior when unset): makes ``fail_closed`` apply to
+    # NON-BLOCKING rules too. A warn rule whose predicate stays UNKNOWN under a fail_closed knob
+    # then FIRES at its declared severity (a normal warn hit marked ``fired_on_unknown``) instead
+    # of being suppressed. It never escalates severity — a warn rule can only ever contribute
+    # WARN — so ``--fail-on policy`` exit behavior is untouched. With the knob off, the
+    # suppression is still surfaced as ``PolicyVerdict.unproven`` telemetry (issue #124).
+    warn_rules_fire_on_unknown: bool = False
 
 
 class Policy(BaseModel):
