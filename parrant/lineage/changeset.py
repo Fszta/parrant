@@ -22,6 +22,7 @@ from parrant.lineage.provider import LineageProvider
 from parrant.lineage.semantic_diff import (
     _UNPARSEABLE_PREFIX,
     canonical_key,
+    comment_free_token_signature,
     compare_expressions,
 )
 from parrant.models.schema import (
@@ -30,7 +31,6 @@ from parrant.models.schema import (
     SemanticChangeKind,
 )
 from parrant.parser.sql_parser import parse_override_directives
-from parrant.parser.sql_parser_utils import strip_sql_comments
 
 logger = logging.getLogger(__name__)
 
@@ -115,18 +115,6 @@ class ColumnChange:
                 "scope": self.override.scope,
             }
         return payload
-
-
-def _normalize_sql(sql: Optional[str]) -> Optional[str]:
-    """Normalize compiled SQL so cosmetic reformatting isn't read as a logic change.
-
-    ``strip_sql_comments`` already removes comments and collapses whitespace runs,
-    which is exactly the noise we want to ignore when deciding whether the logic
-    that produces a model actually changed.
-    """
-    if sql is None:
-        return None
-    return strip_sql_comments(sql)
 
 
 def _registry_dialect(registry: object) -> Optional[str]:
@@ -420,11 +408,23 @@ class ChangesetBuilder:
         return any(registry.is_catalog_backed(name) for name in registry.get_models())
 
     def _logic_changed(self, model_name: str) -> bool:
-        base_sql = _normalize_sql(self._safe_compiled_sql(self.base, model_name))
-        head_sql = _normalize_sql(self._safe_compiled_sql(self.head, model_name))
+        base_sql = self._safe_compiled_sql(self.base, model_name)
+        head_sql = self._safe_compiled_sql(self.head, model_name)
         if not base_sql or not head_sql:
             return False
-        return base_sql != head_sql
+        if base_sql == head_sql:
+            return False
+        # Gate on the string-literal-safe token signature, NOT a regex comment strip: the
+        # tokenizer keeps string/quoted-identifier CONTENTS intact, so a `--` or `/*` inside a
+        # quoted string is data — a regex strip would swallow the real tokens around it and
+        # silently report "no logic change" (a false SAFE). Equal signatures prove the edit is
+        # comment/whitespace-only; anything else — including a side we cannot even tokenize —
+        # is treated as changed (fail-safe; the per-column diff classifies it precisely).
+        base_sig = comment_free_token_signature(base_sql, self._dialect)
+        head_sig = comment_free_token_signature(head_sql, self._dialect)
+        if base_sig is not None and head_sig is not None:
+            return base_sig != head_sig
+        return True
 
     def _logic_changed_columns(self, base_model, head_model) -> Dict[str, "_ColumnDiff"]:
         """Which output columns changed derivation, each with a semantic classification.

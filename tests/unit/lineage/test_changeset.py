@@ -182,6 +182,63 @@ def test_builder_ignores_cosmetic_sql_changes():
     assert ChangesetBuilder(base, head).build() == []
 
 
+def test_builder_detects_change_next_to_dash_comment_inside_string_literal():
+    # The logic gate must be string-literal-aware: a `--` INSIDE a quoted string is data,
+    # not a comment. A naive regex comment-strip removes everything after it — including
+    # the real `* 1` -> `* 100` change on the same line — and silently reports SAFE.
+    base = _FakeRegistry(
+        {"m": _Model({"env": _Col("text"), "amt": _Col("int")})},
+        compiled={"m": "select 'ref -- prod' as env, amount * 1 as amt from t"},
+    )
+    head = _FakeRegistry(
+        {"m": _Model({"env": _Col("text"), "amt": _Col("int")})},
+        compiled={"m": "select 'ref -- prod' as env, amount * 100 as amt from t"},
+    )
+    changes = ChangesetBuilder(base, head).build()
+    assert changes, "a real change hidden behind a '--' inside a string literal must be detected"
+    assert {c.kind for c in changes} == {ChangeKind.LOGIC_CHANGED}
+
+
+def test_builder_detects_change_between_block_comment_markers_inside_string_literals():
+    # Same soundness hole with `/* */`: markers living INSIDE two string literals make a
+    # naive regex strip swallow every real token between them (here `1 as n` -> `2 as n`).
+    base = _FakeRegistry(
+        {"m": _Model({"a": _Col("text"), "n": _Col("int"), "b": _Col("text")})},
+        compiled={"m": "select 'open /*' as a, 1 as n, '*/ close' as b from t"},
+    )
+    head = _FakeRegistry(
+        {"m": _Model({"a": _Col("text"), "n": _Col("int"), "b": _Col("text")})},
+        compiled={"m": "select 'open /*' as a, 2 as n, '*/ close' as b from t"},
+    )
+    changes = ChangesetBuilder(base, head).build()
+    assert changes, "a real change between '/*' and '*/' string contents must be detected"
+    assert {c.kind for c in changes} == {ChangeKind.LOGIC_CHANGED}
+
+
+def test_builder_comment_only_edit_is_not_a_logic_change():
+    base = _FakeRegistry(
+        {"m": _Model({"a": _Col("int")})},
+        compiled={"m": "select 1 as a -- old note\n/* block v1 */ from t"},
+    )
+    head = _FakeRegistry(
+        {"m": _Model({"a": _Col("int")})},
+        compiled={"m": "select 1 as a -- new note\n/* block v2 */ from t"},
+    )
+    assert ChangesetBuilder(base, head).build() == []
+
+
+def test_builder_whitespace_only_edit_is_not_a_logic_change():
+    base = _FakeRegistry(
+        {"m": _Model({"a": _Col("int")})},
+        compiled={"m": "select 1 as a from t"},
+    )
+    head = _FakeRegistry(
+        {"m": _Model({"a": _Col("int")})},
+        compiled={"m": "select   1 as a\n\tfrom t"},
+    )
+    assert ChangesetBuilder(base, head).build() == []
+
+
 def test_builder_logic_change_is_per_column_when_lineage_is_available():
     # base: a, b, c are all plain pass-throughs of an upstream column.
     base = _FakeRegistry(
