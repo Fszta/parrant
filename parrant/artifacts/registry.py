@@ -101,6 +101,8 @@ class ModelRegistry:
         # attached to it AND relationships tests referencing it. Column-level recovery can
         # miss a model's tested columns, but a wholly-removed model breaks all of its tests.
         self._model_tests: Dict[str, List[TestNode]] = {}
+        # Lazily-built macro file -> dependent model-like nodes (see get_macro_dependents).
+        self._macro_dependents: Optional[Dict[str, Set[str]]] = None
 
     @property
     def is_loaded(self) -> bool:
@@ -347,6 +349,19 @@ class ModelRegistry:
         Returns an empty list for an unknown (model, column) pair or one with no tests.
         """
         return list(self._column_tests.get((model.lower(), column.lower()), []))
+
+    def get_macro_dependents(self) -> Dict[str, Set[str]]:
+        """Macro file path -> model-like nodes whose compiled SQL that file can affect.
+
+        Capability method consumed by the ``--scope-git`` fail-safe (looked up via
+        ``getattr``, not part of the provider protocols): a changed macro file scopes to
+        exactly its (transitive) dependents instead of disabling scoping. Delegates to the
+        manifest's macro graph; cached after the first call (the manifest is immutable
+        post-load).
+        """
+        if self._macro_dependents is None:
+            self._macro_dependents = self._manifest_reader.get_macro_dependents()
+        return self._macro_dependents
 
     def get_tests_referencing(self, model: str, column: str) -> List[TestNode]:
         """Return relationships tests whose *referenced* (parent) side is ``model.column``.

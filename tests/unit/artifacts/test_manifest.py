@@ -395,3 +395,78 @@ def test_manifest_normalizes_exposure_dependencies(tmp_path: Path) -> None:
     assert "dashboard" in exposure_deps
     assert "customers" in exposure_deps["dashboard"]
     assert "CUSTOMERS" not in exposure_deps["dashboard"]
+
+
+# --- macro -> dependent-model mapping (feeds the --scope-git macro ceiling) ----
+
+
+def test_macro_dependents_direct_and_transitive():
+    """A node depending on macro A, where A calls macro B, depends on BOTH files."""
+    reader = ManifestReader("some/path")
+    reader.manifest = {
+        "nodes": {
+            "model.pkg.orders": {
+                "name": "Orders",
+                "resource_type": "model",
+                "depends_on": {"nodes": [], "macros": ["macro.pkg.money"]},
+            },
+            "model.pkg.customers": {
+                "name": "customers",
+                "resource_type": "model",
+                "depends_on": {"nodes": [], "macros": []},
+            },
+            "test.pkg.some_test": {
+                "name": "some_test",
+                "resource_type": "test",
+                "depends_on": {"nodes": [], "macros": ["macro.pkg.rounding"]},
+            },
+        },
+        "macros": {
+            "macro.pkg.money": {
+                "original_file_path": "macros/money.sql",
+                "depends_on": {"macros": ["macro.pkg.rounding"]},
+            },
+            "macro.pkg.rounding": {
+                "original_file_path": "./macros/rounding.sql",
+                "depends_on": {"macros": []},
+            },
+        },
+    }
+    dependents = reader.get_macro_dependents()
+    # Direct use of money -> orders; rounding is called BY money, so a change to
+    # rounding.sql also reaches orders (transitive). Paths are normalized (no ./).
+    assert dependents["macros/money.sql"] == {"orders"}
+    assert dependents["macros/rounding.sql"] == {"orders"}
+    # The test node is not a model-like node: it never appears as a dependent.
+    assert "customers" not in dependents["macros/money.sql"]
+
+
+def test_macro_dependents_cycle_safe_and_empty():
+    reader = ManifestReader("some/path")
+    reader.manifest = {
+        "nodes": {
+            "model.pkg.m": {
+                "name": "m",
+                "resource_type": "model",
+                "depends_on": {"nodes": [], "macros": ["macro.pkg.a"]},
+            },
+        },
+        "macros": {
+            "macro.pkg.a": {
+                "original_file_path": "macros/a.sql",
+                "depends_on": {"macros": ["macro.pkg.b"]},
+            },
+            "macro.pkg.b": {
+                "original_file_path": "macros/b.sql",
+                # Cycle back to a: closure must terminate.
+                "depends_on": {"macros": ["macro.pkg.a"]},
+            },
+        },
+    }
+    dependents = reader.get_macro_dependents()
+    assert dependents["macros/a.sql"] == {"m"}
+    assert dependents["macros/b.sql"] == {"m"}
+
+    empty = ManifestReader("some/path")
+    empty.manifest = {"nodes": {}}
+    assert empty.get_macro_dependents() == {}
