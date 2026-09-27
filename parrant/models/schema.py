@@ -885,6 +885,27 @@ class RuleHit(BaseModel):
     unknown_cause: Optional[Literal["missing", "error"]] = None
 
 
+class UnprovenPolicyHit(BaseModel):
+    """A suppressed-unknown firing: a NON-BLOCKING rule whose predicate stayed UNKNOWN under a
+    ``fail_closed`` knob (issue #124).
+
+    Under fail_closed only a *blocking* rule fires on UNKNOWN; a warn rule is suppressed so the
+    engine never manufactures a spurious warning. But silence would make an all-warn pilot policy
+    systematically understate what block mode will do — so each suppression is recorded here:
+    the rule, the subject change, the UNKNOWN cause (missing meta vs evaluation error), and the
+    leaf condition(s) that resolved UNKNOWN. Report-only telemetry: it contributes nothing to
+    the gate decision, hits, or exit code.
+    """
+
+    rule_id: str
+    change_model: Optional[str] = None
+    change_column: Optional[str] = None
+    unknown_cause: Literal["missing", "error"]
+    # The leaf conditions that resolved UNKNOWN while this rule was evaluated, as compact
+    # ``axis.key`` labels (e.g. ``meta.pii``, ``reach.exposure``) — the "what to tag" pointer.
+    unknown_leaves: List[str] = Field(default_factory=list)
+
+
 class PolicyVerdict(BaseModel):
     """The engine's output: a gate decision + accumulated build/test sets + notifications."""
 
@@ -898,6 +919,11 @@ class PolicyVerdict(BaseModel):
     # Honesty counters for fail-safe explainability (additive; see policy.py §7).
     unresolved_reach_count: int = 0
     skipped_missing_meta: int = 0
+    # Suppressed-unknown telemetry (additive; issue #124): warn-rule conditions that a
+    # fail_closed knob WOULD have fired were the rule blocking. ``unproven_count`` mirrors
+    # ``len(unproven)`` for one-glance consumers of the JSON verdict.
+    unproven: List[UnprovenPolicyHit] = Field(default_factory=list)
+    unproven_count: int = 0
 
     def blocks(self) -> bool:
         """True when the gate decision is ``BLOCK``."""

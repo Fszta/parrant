@@ -421,6 +421,44 @@ def _render_policy_section(verdict: Dict[str, Any]) -> List[str]:
             "",
         ]
 
+    out += _render_unproven_conditions(verdict)
+
+    return out
+
+
+def _render_unproven_conditions(verdict: Dict[str, Any]) -> List[str]:
+    """Suppressed-unknown telemetry (additive section, issue #124): warn-rule conditions that a
+    ``fail_closed`` knob would have fired were the rule blocking. An all-warn pilot policy must
+    never read clean while block mode would fail closed here — so the count line is loud and the
+    per-rule list is folded (visibility without warning-flood)."""
+    unproven = verdict.get("unproven") or []
+    if not unproven:
+        return []
+    out: List[str] = [
+        "> ⚠️ **"
+        + _plural(len(unproven), "unproven warn-rule condition")
+        + " (unknown metadata under `fail_closed`)** — suppressed, not fired; block mode "
+        "would fail closed here.",
+        "",
+        f"<details><summary>Unproven conditions ({len(unproven)})</summary>",
+        "",
+    ]
+    for record in unproven:
+        rule_id = record.get("rule_id", "?")
+        model = record.get("change_model")
+        column = record.get("change_column")
+        if model and column:
+            subject = f"`{model}.{column}`"
+        elif model:
+            subject = f"`{model}`"
+        else:
+            subject = "_changeset_"
+        cause = record.get("unknown_cause")
+        cause_txt = "evaluation error" if cause == "error" else "meta missing"
+        leaves = record.get("unknown_leaves") or []
+        leaves_txt = " — unknown: " + ", ".join(f"`{leaf}`" for leaf in leaves) if leaves else ""
+        out.append(f"- **{rule_id}** on {subject} ({cause_txt}){leaves_txt}")
+    out += ["", "</details>", ""]
     return out
 
 

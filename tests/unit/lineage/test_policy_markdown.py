@@ -194,3 +194,65 @@ def test_why_this_verdict_heading_present():
     verdict = {"decision": "block", "hits": [_hit()]}
     md = render_changeset_markdown(_report_with_policy(verdict))
     assert "Why this verdict" in md
+
+
+def test_unproven_conditions_render_honest_line_with_folded_list():
+    """Issue #124 telemetry: suppressed warn-rule UNKNOWNs under fail_closed render an honest
+    count line plus the folded per-rule list, so an all-warn pilot report never reads clean
+    while block mode would fail closed."""
+    verdict = {
+        "decision": "allow",
+        "hits": [],
+        "unproven_count": 2,
+        "unproven": [
+            {
+                "rule_id": "warn-pii",
+                "change_model": "stg_accounts",
+                "change_column": "ssn",
+                "unknown_cause": "missing",
+                "unknown_leaves": ["meta.pii"],
+            },
+            {
+                "rule_id": "roles-subset",
+                "change_model": "stg_accounts",
+                "change_column": "roles",
+                "unknown_cause": "error",
+                "unknown_leaves": ["meta.roles"],
+            },
+        ],
+    }
+    md = render_changeset_markdown(_report_with_policy(verdict))
+    assert "2 unproven warn-rule conditions (unknown metadata under `fail_closed`)" in md
+    # The list is folded but present, identifying rule, subject, leaf, and cause.
+    assert "<details><summary>Unproven conditions (2)</summary>" in md
+    assert "warn-pii" in md
+    assert "`stg_accounts.ssn`" in md
+    assert "meta.pii" in md
+    assert "meta missing" in md
+    assert "evaluation error" in md
+
+
+def test_unproven_singular_line():
+    verdict = {
+        "decision": "allow",
+        "hits": [],
+        "unproven_count": 1,
+        "unproven": [
+            {
+                "rule_id": "warn-pii",
+                "change_model": "m",
+                "change_column": "c",
+                "unknown_cause": "missing",
+                "unknown_leaves": ["meta.pii"],
+            }
+        ],
+    }
+    md = render_changeset_markdown(_report_with_policy(verdict))
+    assert "1 unproven warn-rule condition (unknown metadata under `fail_closed`)" in md
+
+
+def test_no_unproven_renders_no_unproven_section():
+    verdict = {"decision": "allow", "hits": [], "unproven_count": 0, "unproven": []}
+    md = render_changeset_markdown(_report_with_policy(verdict))
+    assert "unproven warn-rule condition" not in md
+    assert "Unproven conditions" not in md
