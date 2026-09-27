@@ -735,7 +735,9 @@ class SQLColumnParser:
         return out
 
     @staticmethod
-    def _phantom_token_reason(token: str, flatten_aliases: Set[str]) -> Optional[str]:
+    def _phantom_token_reason(
+        token: str, flatten_aliases: Set[str]
+    ) -> Optional[Literal["pivot_output", "phantom_alias"]]:
         """Classify a source token as a fabricated edge, or ``None`` if it is genuine.
 
         Returns ``"pivot_output"`` for a quoted pivot literal, ``"phantom_alias"`` for a

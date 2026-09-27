@@ -39,7 +39,7 @@ from parrant.cli.main import cli, impact
 
 _FIXTURE_DIR = Path(__file__).parents[1] / "fixtures" / "unresolved_edges"
 sys.path.insert(0, str(_FIXTURE_DIR))
-import _build  # noqa: E402  (path-injected fixture builder)
+import _build  # type: ignore[import-not-found]  # noqa: E402  (path-injected fixture builder)
 
 # Materialize the abstract manifest + catalog once into a tmp dir for the whole module.
 _TMP = tempfile.TemporaryDirectory()

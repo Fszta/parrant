@@ -175,6 +175,9 @@ class InMemoryProvider:
     def get_column_dbt_meta(self, model: str, column: str) -> Dict[str, Any]:
         return {}
 
+    def get_model_config(self, model: str) -> Dict[str, Any]:
+        return {}
+
 
 # --- fixtures --------------------------------------------------------------
 

@@ -196,6 +196,14 @@ class ProjectMetadataProvider(Protocol):
         Same contract as :meth:`get_model_dbt_meta`, scoped to one column. Absent ⇒ ``{}``.
         """
 
+    def get_model_config(self, model: str) -> Dict[str, Any]:
+        """The node's resolved dbt ``config`` dict for a model (case-insensitive), or ``{}``.
+
+        Manifest-sourced and metadata-agnostic, exactly like :meth:`get_model_dbt_meta`:
+        every key (``materialized``, ``grants``, ``tags``, …) is exposed generically, none
+        privileged, values surfaced raw. Absent config ⇒ ``{}`` — never guessed.
+        """
+
 
 @runtime_checkable
 class LineageAndMetadataProvider(LineageProvider, ProjectMetadataProvider, Protocol):

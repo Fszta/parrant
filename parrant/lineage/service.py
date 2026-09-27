@@ -164,7 +164,9 @@ def _partial_edges_reason(registry: LineageAndMetadataProvider, name: str) -> st
         model = registry.get_model(name)
     except ModelNotFoundError:
         return "unresolved_edge"
-    reasons = [edge.get("reason") for edge in _unresolved_edges(model) if edge.get("reason")]
+    reasons: List[str] = [
+        str(edge["reason"]) for edge in _unresolved_edges(model) if edge.get("reason")
+    ]
     if not reasons:
         return "unresolved_edge"
     counts = Counter(reasons)
