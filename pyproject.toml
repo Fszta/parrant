@@ -74,7 +74,7 @@ build-backend = "poetry.core.masonry.api"
 
 [tool.mypy]
 python_version = "3.10"
-files = ["dbt_column_lineage", "tests"]
+files = ["parrant", "tests"]
 show_error_codes = true
 pretty = true
 explicit_package_bases = true
