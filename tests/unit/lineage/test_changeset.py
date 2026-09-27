@@ -34,6 +34,9 @@ class _Col:
 @dataclass
 class _Model:
     columns: Dict[str, _Col]
+    # Optional so existing stubs stay minimal; the missing-compiled-SQL indeterminate
+    # pathway only applies to real model nodes, which always carry a resource_type.
+    resource_type: Optional[str] = None
 
 
 @dataclass
@@ -237,6 +240,51 @@ def test_builder_whitespace_only_edit_is_not_a_logic_change():
         compiled={"m": "select   1 as a\n\tfrom t"},
     )
     assert ChangesetBuilder(base, head).build() == []
+
+
+def test_builder_missing_head_sql_on_model_is_indeterminate_not_silent_safe():
+    # A MODEL whose compiled SQL is unavailable on the head side cannot be proven
+    # unchanged. Silently returning "no logic change" is a false SAFE: the change is
+    # invisible AND the model would not even rebuild itself. It must surface as an
+    # explicit indeterminate logic change on every head column.
+    base = _FakeRegistry(
+        {"m": _Model({"a": _Col("int"), "b": _Col("text")}, resource_type="model")},
+        compiled={"m": "select 1 as a, 'x' as b"},
+    )
+    head = _FakeRegistry(
+        {"m": _Model({"a": _Col("int"), "b": _Col("text")}, resource_type="model")},
+        compiled={},  # head compiled SQL unavailable
+    )
+    changes = ChangesetBuilder(base, head).build()
+    assert {c.column for c in changes} == {"a", "b"}
+    for change in changes:
+        assert change.kind == ChangeKind.LOGIC_CHANGED
+        assert change.semantic == SemanticChangeKind.INDETERMINATE
+        assert change.logic_diff_status == "indeterminate"
+        assert change.reason
+
+
+def test_builder_missing_base_sql_on_model_is_indeterminate_not_silent_safe():
+    base = _FakeRegistry(
+        {"m": _Model({"a": _Col("int")}, resource_type="model")},
+        compiled={},  # base compiled SQL unavailable
+    )
+    head = _FakeRegistry(
+        {"m": _Model({"a": _Col("int")}, resource_type="model")},
+        compiled={"m": "select 1 as a"},
+    )
+    changes = ChangesetBuilder(base, head).build()
+    assert [c.logic_diff_status for c in changes] == ["indeterminate"]
+    assert changes[0].to_dict()["logic_diff_status"] == "indeterminate"
+
+
+def test_builder_missing_sql_on_non_model_nodes_stays_silent():
+    # Sources / seeds / snapshots legitimately have no compiled logic to diff — missing
+    # SQL there is NOT indeterminate.
+    for resource_type in ("source", "seed", "snapshot"):
+        base = _FakeRegistry({"n": _Model({"a": _Col("int")}, resource_type=resource_type)})
+        head = _FakeRegistry({"n": _Model({"a": _Col("int")}, resource_type=resource_type)})
+        assert ChangesetBuilder(base, head).build() == [], resource_type
 
 
 def test_builder_logic_change_is_per_column_when_lineage_is_available():

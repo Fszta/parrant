@@ -73,6 +73,13 @@ class SemanticChangeKind(str, Enum):
         return self is not SemanticChangeKind.EQUIVALENT
 
 
+# Outcome of the model-level compiled-SQL diff. ``indeterminate`` means the diff was
+# IMPOSSIBLE (compiled SQL unavailable on a side for a model node): "no logic change" is
+# unprovable, so the changeset emits fail-safe changes carrying this marker instead of
+# silently reporting safe. Rides on ``ColumnChange.logic_diff_status`` / the JSON change dicts.
+LogicDiffStatus = Literal["changed", "unchanged", "indeterminate"]
+
+
 class SemanticDiff(BaseModel):
     """Result of comparing two SQL expressions for semantic equality.
 
@@ -317,6 +324,13 @@ class ImpactConfidence(BaseModel):
     # COMPLETE, uncapped machine list — len(opaque_models) == opaque always in machine output.
     opaque: int = 0
     opaque_models: List[str] = Field(default_factory=list)
+    # Changed models whose model-level logic diff was IMPOSSIBLE (compiled SQL unavailable on a
+    # side — see ``LogicDiffStatus``). "No logic change" was unprovable for them, so their
+    # presence drops ``level`` to ``partial`` (which widens the rebuild selection): nothing
+    # downstream of an un-diffable model may be proven safe to skip. COMPLETE, uncapped machine
+    # list — len(indeterminate_logic_models) == indeterminate_logic always in machine output.
+    indeterminate_logic: int = 0
+    indeterminate_logic_models: List[str] = Field(default_factory=list)
     # Display-only truncation signals: False in machine output (lists are complete),
     # set True only by a display layer when it elided names from the rendered list.
     no_column_info_truncated: bool = False

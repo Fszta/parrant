@@ -26,6 +26,7 @@ from parrant.lineage.semantic_diff import (
     compare_expressions,
 )
 from parrant.models.schema import (
+    LogicDiffStatus,
     OverrideDirective,
     OverrideVerb,
     SemanticChangeKind,
@@ -87,6 +88,11 @@ class ColumnChange:
     # equality/hashing (``compare=False``) so it never perturbs the sort key or dedup, and so a
     # frozen ``ColumnChange`` stays hashable even though ``OverrideDirective`` (pydantic) is not.
     override: Optional[OverrideDirective] = field(default=None, compare=False)
+    # Set to ``"indeterminate"`` when the model-level logic diff was IMPOSSIBLE (compiled SQL
+    # unavailable on a side for a model node): "no logic change" was unprovable, so the change
+    # is emitted fail-safe rather than silently dropped. ``None`` for every ordinary change.
+    # Consumed by the service to degrade confidence and widen the rebuild selection.
+    logic_diff_status: Optional[LogicDiffStatus] = None
 
     def to_dict(self) -> Dict[str, object]:
         payload: Dict[str, object] = {
@@ -104,6 +110,10 @@ class ColumnChange:
                 "base": self.base_expression,
                 "head": self.head_expression,
             }
+        # Only attach ``logic_diff_status`` when set (the indeterminate missing-SQL case), so
+        # ordinary changes keep their existing JSON shape byte-for-byte.
+        if self.logic_diff_status is not None:
+            payload["logic_diff_status"] = self.logic_diff_status
         # Only attach ``override`` when one is present, so JSON stays byte-stable when absent.
         # Flows into service.by_change automatically (by_change spreads change.to_dict()).
         if self.override is not None:
@@ -331,13 +341,21 @@ class ChangesetBuilder:
                                 )
                             )
 
+            # Logic diff: three-state, never silently safe. ``indeterminate`` (a MODEL whose
+            # compiled SQL is unavailable on a side) emits fail-safe changes below — treating
+            # it as "no change" would hide the edit AND leave the model out of the rebuild.
+            logic_status = self._logic_diff_status(model_name, head_model)
+            if logic_status == "indeterminate":
+                for change in self._indeterminate_logic_changes(model_name, head_model):
+                    record(change)
+
             # Logic change: the model's compiled SQL differs. Rather than flag EVERY output
             # column — which floods the downstream blast radius with unrelated pass-throughs
             # (editing one column must not implicate every other column of the model) — diff each output
             # column's derivation between base and head and flag ONLY the columns that actually
             # changed. Falls back to flagging all columns when neither side exposes per-column
             # lineage (nothing to diff precisely).
-            if self._logic_changed(model_name):
+            if logic_status == "changed":
                 classified = self._logic_changed_columns(base_model, head_model)
                 if not classified:
                     # The compiled SQL provably changed, yet no output column's per-column
@@ -407,13 +425,25 @@ class ChangesetBuilder:
     def _side_has_catalog(registry: LineageProvider) -> bool:
         return any(registry.is_catalog_backed(name) for name in registry.get_models())
 
-    def _logic_changed(self, model_name: str) -> bool:
+    def _logic_diff_status(self, model_name: str, head_model: Any) -> LogicDiffStatus:
+        """Three-state logic diff for a node present on both sides — never silently safe.
+
+        ``"changed"`` / ``"unchanged"`` when both sides expose compiled SQL to compare.
+        When either side's compiled SQL is unavailable the answer depends on the node kind:
+        sources / seeds / snapshots legitimately have no logic to diff (``"unchanged"``),
+        but a MODEL without compiled SQL cannot be proven unchanged — that is
+        ``"indeterminate"``, and the caller emits fail-safe changes for it. The resource
+        type is read defensively (``getattr``) so lightweight stubs without one keep the
+        historical no-op behaviour; every real registry model carries it.
+        """
         base_sql = self._safe_compiled_sql(self.base, model_name)
         head_sql = self._safe_compiled_sql(self.head, model_name)
         if not base_sql or not head_sql:
-            return False
+            if getattr(head_model, "resource_type", None) == "model":
+                return "indeterminate"
+            return "unchanged"
         if base_sql == head_sql:
-            return False
+            return "unchanged"
         # Gate on the string-literal-safe token signature, NOT a regex comment strip: the
         # tokenizer keeps string/quoted-identifier CONTENTS intact, so a `--` or `/*` inside a
         # quoted string is data — a regex strip would swallow the real tokens around it and
@@ -423,8 +453,33 @@ class ChangesetBuilder:
         base_sig = comment_free_token_signature(base_sql, self._dialect)
         head_sig = comment_free_token_signature(head_sql, self._dialect)
         if base_sig is not None and head_sig is not None:
-            return base_sig != head_sig
-        return True
+            return "changed" if base_sig != head_sig else "unchanged"
+        return "changed"
+
+    def _indeterminate_logic_changes(self, model_name: str, head_model: Any) -> List[ColumnChange]:
+        """Fail-safe changes for a model whose logic diff was impossible (missing SQL).
+
+        Every head output column is flagged ``LOGIC_CHANGED`` / ``INDETERMINATE`` with the
+        ``logic_diff_status`` marker so the service degrades confidence and widens the rebuild
+        selection. A column-less model (no catalog entry AND no SQL to parse) still emits one
+        ``*`` sentinel change — an unprovable model must never vanish from the report.
+        """
+        reason = (
+            f"compiled SQL for model '{model_name}' is unavailable on at least one side — "
+            "the logic diff is impossible, so 'no logic change' cannot be proven (fail-safe)"
+        )
+        columns = sorted(head_model.columns) or ["*"]
+        return [
+            ColumnChange(
+                model_name,
+                column,
+                ChangeKind.LOGIC_CHANGED,
+                semantic=SemanticChangeKind.INDETERMINATE,
+                reason=reason,
+                logic_diff_status="indeterminate",
+            )
+            for column in columns
+        ]
 
     def _logic_changed_columns(self, base_model, head_model) -> Dict[str, "_ColumnDiff"]:
         """Which output columns changed derivation, each with a semantic classification.

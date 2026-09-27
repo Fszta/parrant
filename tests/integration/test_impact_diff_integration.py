@@ -165,6 +165,73 @@ def test_impact_two_manifest_json_report(dbt_artifacts, base_artifacts):
     assert "by_change" in payload
 
 
+@pytest.fixture
+def missing_head_sql_artifacts(dbt_artifacts, tmp_path):
+    """A HEAD whose stg_accounts has NO compiled SQL available (embedded or on disk).
+
+    Written into a bare temp dir so the ``target/compiled/**`` on-disk recovery cannot
+    find it either — the model's logic diff is genuinely impossible on the head side.
+    """
+    catalog = copy.deepcopy(_load(dbt_artifacts["catalog_path"]))
+    manifest = copy.deepcopy(_load(dbt_artifacts["manifest_path"]))
+    node = manifest["nodes"]["model.test_project.stg_accounts"]
+    node.pop("compiled_code", None)
+    node.pop("compiled_path", None)
+    head_catalog = tmp_path / "head_catalog.json"
+    head_manifest = tmp_path / "head_manifest.json"
+    head_catalog.write_text(json.dumps(catalog))
+    head_manifest.write_text(json.dumps(manifest))
+    return {"catalog": str(head_catalog), "manifest": str(head_manifest)}
+
+
+def test_impact_missing_head_sql_is_indeterminate_widens_and_degrades(
+    dbt_artifacts, missing_head_sql_artifacts
+):
+    """A model with compiled SQL on base but none on head must never read as silent-safe.
+
+    The unprovable logic diff must (a) surface as explicit indeterminate changes in the
+    JSON report, (b) degrade the impact confidence, and (c) widen the rebuild selection.
+    """
+    result = _run_impact(
+        [
+            "--manifest",
+            missing_head_sql_artifacts["manifest"],
+            "--catalog",
+            missing_head_sql_artifacts["catalog"],
+            "--base-manifest",
+            str(dbt_artifacts["manifest_path"]),
+            "--base-catalog",
+            str(dbt_artifacts["catalog_path"]),
+            "--format",
+            "json",
+        ]
+    )
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+
+    # (a) explicit indeterminate changes for the SQL-less model in the JSON report.
+    indeterminate = [
+        c
+        for c in payload["changeset"]["changes"]
+        if c["model"] == "stg_accounts" and c.get("logic_diff_status") == "indeterminate"
+    ]
+    assert indeterminate, payload["changeset"]["changes"]
+    assert all(c["kind"] == "logic_changed" for c in indeterminate)
+    assert all(c["semantic"] == "indeterminate" for c in indeterminate)
+
+    # (b) confidence is degraded and names the model.
+    confidence = payload["confidence"]
+    assert confidence["level"] == "partial"
+    assert "stg_accounts" in confidence["indeterminate_logic_models"]
+    assert confidence["indeterminate_logic"] >= 1
+
+    # (c) the rebuild selection widens: nothing downstream may be skipped.
+    selection = payload["selection"]
+    assert selection["widened_to_all_reachable"] is True
+    assert selection["skippable_models"] == []
+    assert "stg_accounts" in selection["rebuild_models"]
+
+
 def test_impact_two_manifest_markdown_default(dbt_artifacts, base_artifacts):
     result = _run_impact(
         [
