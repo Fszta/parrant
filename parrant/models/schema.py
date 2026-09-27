@@ -73,6 +73,38 @@ class SemanticChangeKind(str, Enum):
         return self is not SemanticChangeKind.EQUIVALENT
 
 
+class ArtifactStamp(BaseModel):
+    """Identity stamp of one loaded dbt artifact, from its ``metadata`` block.
+
+    ``generated_at`` / ``invocation_id`` are what dbt writes on every run; either may be
+    missing on hand-crafted or truncated artifacts, in which case no identity claim is made.
+    """
+
+    generated_at: Optional[str] = None
+    invocation_id: Optional[str] = None
+
+
+class ArtifactStamps(BaseModel):
+    """The catalog + manifest identity stamps of one side of a two-manifest diff."""
+
+    catalog: ArtifactStamp = Field(default_factory=ArtifactStamp)
+    manifest: ArtifactStamp = Field(default_factory=ArtifactStamp)
+
+
+class StructuralDiffStatus(BaseModel):
+    """Honesty stamp for the structural (added/removed/type_changed) column diff.
+
+    Emitted ONLY when degraded — e.g. one prod ``catalog.json`` mounted on both sides
+    (identical catalogs can never show a removed/retyped column) or a head catalog that
+    predates the head manifest (stale column truth). Purely advisory: it changes no exit
+    code and no verdict, it makes the blind spot visible in the report instead of letting
+    ``provable_break_count == 0`` read as proof.
+    """
+
+    status: Literal["degraded"]
+    reason: str
+
+
 # Outcome of the model-level compiled-SQL diff. ``indeterminate`` means the diff was
 # IMPOSSIBLE (compiled SQL unavailable on a side for a model node): "no logic change" is
 # unprovable, so the changeset emits fail-safe changes carrying this marker instead of

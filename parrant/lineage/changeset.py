@@ -15,6 +15,7 @@ import logging
 import re
 import subprocess
 from dataclasses import dataclass, field
+from datetime import datetime
 from enum import Enum
 from typing import Any, Dict, List, Optional, Set, Tuple
 
@@ -30,6 +31,7 @@ from parrant.models.schema import (
     OverrideDirective,
     OverrideVerb,
     SemanticChangeKind,
+    StructuralDiffStatus,
 )
 from parrant.parser.sql_parser import parse_override_directives
 
@@ -651,6 +653,90 @@ class ChangesetBuilder:
             return None
 
 
+def _provider_call(provider: object, method: str) -> Any:
+    """Call a zero-arg accessor on a provider defensively (``None`` when absent/failing).
+
+    Mirrors :func:`_registry_dialect`: a real ``ModelRegistry`` answers, a lightweight test
+    stub without the accessor simply makes no claim rather than raising.
+    """
+    getter = getattr(provider, method, None)
+    if not callable(getter):
+        return None
+    try:
+        return getter()
+    except Exception:
+        return None
+
+
+def _parse_artifact_timestamp(raw: Optional[str]) -> Optional[datetime]:
+    """Parse a dbt ``generated_at`` ISO timestamp, ``None`` when absent/unparseable."""
+    if not raw or not isinstance(raw, str):
+        return None
+    try:
+        # dbt stamps UTC with a trailing ``Z``, which py3.10's fromisoformat rejects.
+        return datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
+def detect_structural_degradation(
+    base: LineageProvider, head: LineageProvider
+) -> Optional[StructuralDiffStatus]:
+    """Detect a base/head catalog pair that structurally CANNOT show column changes.
+
+    Two real-deployment failure modes make the structural (added/removed/type_changed) diff
+    silently blind while ``structural_diff_available()`` still reports True:
+
+    * **Identical catalogs** — one prod ``catalog.json`` mounted on both sides. Diffing a
+      catalog against itself can never surface a removed or retyped column, so
+      ``provable_break_count`` is stuck at 0 and ``--fail-on tests`` can never fire.
+    * **Stale head catalog** — the head ``catalog.json`` predates the head manifest (and comes
+      from a different dbt invocation): its column truth describes an older build.
+
+    Returns a ``degraded`` stamp with a human-readable reason, or ``None`` when neither
+    condition is provable (providers without artifact identity — e.g. stubs — make no claim).
+    Advisory only: consumed by the report/JSON/markdown surfaces, never by exit codes.
+    """
+    base_fingerprint = _provider_call(base, "get_catalog_fingerprint")
+    head_fingerprint = _provider_call(head, "get_catalog_fingerprint")
+    if base_fingerprint is not None and base_fingerprint == head_fingerprint:
+        return StructuralDiffStatus(
+            status="degraded",
+            reason=(
+                "base and head catalog.json are identical — one catalog backs both sides, so "
+                "removed/type_changed columns can never be detected"
+            ),
+        )
+
+    stamps = _provider_call(head, "get_artifact_stamps")
+    if stamps is not None:
+        catalog_stamp = stamps.catalog
+        manifest_stamp = stamps.manifest
+        same_invocation = (
+            catalog_stamp.invocation_id is not None
+            and catalog_stamp.invocation_id == manifest_stamp.invocation_id
+        )
+        if not same_invocation:
+            catalog_ts = _parse_artifact_timestamp(catalog_stamp.generated_at)
+            manifest_ts = _parse_artifact_timestamp(manifest_stamp.generated_at)
+            try:
+                stale = (
+                    catalog_ts is not None and manifest_ts is not None and catalog_ts < manifest_ts
+                )
+            except TypeError:  # mixed aware/naive timestamps — no provable claim
+                stale = False
+            if stale:
+                return StructuralDiffStatus(
+                    status="degraded",
+                    reason=(
+                        f"head catalog.json (generated_at {catalog_stamp.generated_at}) predates "
+                        f"the head manifest ({manifest_stamp.generated_at}) — its column truth "
+                        "is stale, so removed/type_changed detection is unreliable"
+                    ),
+                )
+    return None
+
+
 def _path_to_model_map(head: LineageProvider) -> Dict[str, str]:
     """Map each model's ``resource_path`` (dbt ``original_file_path``) to its name."""
     mapping: Dict[str, str] = {}
@@ -839,6 +925,16 @@ def _git_changed_sql_files(
     return [line.strip() for line in result.stdout.splitlines() if line.strip()]
 
 
+def _parrant_version() -> Optional[str]:
+    """The installed parrant version, or ``None`` when metadata is unavailable."""
+    try:
+        from importlib.metadata import version
+
+        return version("parrant")
+    except Exception:  # noqa: BLE001 - advisory field; never fail the report over metadata
+        return None
+
+
 def build_changeset_report(
     source: str,
     changes: List[ColumnChange],
@@ -849,18 +945,22 @@ def build_changeset_report(
     The impact keys (``summary``, ``affected_models``, ``affected_columns``,
     ``affected_exposures``) are a superset of the single-column ``impact`` block,
     so existing consumers keep working; ``changeset`` and ``by_change`` are added.
+    ``report_version`` / ``parrant_version`` identify the report shape and producer so a
+    machine consumer can pin what it parses.
     """
     by_kind: Dict[str, int] = {}
     for change in changes:
         by_kind[change.kind.value] = by_kind.get(change.kind.value, 0) + 1
 
     report: Dict[str, object] = {
+        "report_version": 1,
+        "parrant_version": _parrant_version(),
         "changeset": {
             "source": source,
             "total_changes": len(changes),
             "by_kind": by_kind,
             "changes": [change.to_dict() for change in changes],
-        }
+        },
     }
     report.update(aggregated)
     return report

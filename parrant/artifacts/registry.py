@@ -1,10 +1,14 @@
 from typing import Any, Dict, List, Optional, Set, Tuple
 from dataclasses import dataclass, field
+import hashlib
+import json
 import logging
 
 from parrant.artifacts.catalog import CatalogReader
 from parrant.artifacts.manifest import ManifestReader
 from parrant.models.schema import (
+    ArtifactStamp,
+    ArtifactStamps,
     Model,
     Column,
     SQLParseResult,
@@ -760,6 +764,39 @@ class ModelRegistry:
         AST semantic-diff canonicalizes expressions with the right dialect rules.
         """
         return self._dialect
+
+    def get_artifact_stamps(self) -> ArtifactStamps:
+        """Identity stamps (``generated_at`` / ``invocation_id``) of the loaded artifacts.
+
+        Read from each artifact's ``metadata`` block; a missing block yields empty stamps
+        (no identity claim). Consumed by the two-manifest diff to detect a stale or shared
+        catalog and stamp the report ``structural_diff: degraded`` instead of staying silent.
+        """
+        catalog_meta = (self._catalog_reader.catalog or {}).get("metadata") or {}
+        manifest_meta = (self._manifest_reader.manifest or {}).get("metadata") or {}
+        return ArtifactStamps(
+            catalog=ArtifactStamp(
+                generated_at=catalog_meta.get("generated_at"),
+                invocation_id=catalog_meta.get("invocation_id"),
+            ),
+            manifest=ArtifactStamp(
+                generated_at=manifest_meta.get("generated_at"),
+                invocation_id=manifest_meta.get("invocation_id"),
+            ),
+        )
+
+    def get_catalog_fingerprint(self) -> Optional[str]:
+        """Content fingerprint (sha256 over canonical JSON) of the loaded ``catalog.json``.
+
+        Byte-formatting-insensitive: two catalogs with the same CONTENT (the real signal —
+        e.g. one prod catalog mounted on both diff sides) fingerprint equal even if
+        re-serialized. ``None`` when no catalog content is loaded (no identity claim).
+        """
+        content = self._catalog_reader.catalog
+        if not content:
+            return None
+        canonical = json.dumps(content, sort_keys=True, separators=(",", ":"))
+        return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
     def get_model(self, model_name: str) -> Model:
         """Get a specific model by name."""

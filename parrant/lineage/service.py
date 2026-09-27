@@ -1215,7 +1215,7 @@ class LineageService:
         """
         # Deferred import: changeset depends on the registry, not the service, so
         # importing here keeps module load order simple and avoids any cycle.
-        from parrant.lineage.changeset import ChangeKind
+        from parrant.lineage.changeset import ChangeKind, detect_structural_degradation
 
         affected_models: Dict[str, Dict[str, Any]] = {}
         affected_columns: Dict[Tuple[str, str], Dict[str, Any]] = {}
@@ -1367,7 +1367,7 @@ class LineageService:
                 self.registry, partition, set(selection["rebuild_models"])
             )
 
-        return {
+        result: Dict[str, Any] = {
             "summary": {
                 "affected_models": len(affected_models),
                 "affected_columns": len(deduped_columns),
@@ -1387,3 +1387,16 @@ class LineageService:
             "resolution": resolution,
             "resolution_summary": resolution_summary,
         }
+
+        # Honesty stamp: identical or stale base/head catalogs make the structural
+        # (added/removed/type_changed) diff structurally blind while it still nominally "ran".
+        # Stamp the report so a quiet run reads as degraded, not as proof. Advisory only —
+        # exit codes and verdicts are untouched; the key is absent when nothing is provable.
+        if base_service is not None and getattr(self, "registry", None) is not None:
+            base_registry = getattr(base_service, "registry", None)
+            if base_registry is not None:
+                degradation = detect_structural_degradation(base_registry, self.registry)
+                if degradation is not None:
+                    result["structural_diff"] = degradation.model_dump()
+                    result["summary"]["structural_diff"] = degradation.status
+        return result

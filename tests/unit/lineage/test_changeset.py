@@ -16,9 +16,10 @@ from parrant.lineage.changeset import (
     ColumnChange,
     build_changeset_report,
     build_git_changeset,
+    detect_structural_degradation,
     scope_changes_to_models,
 )
-from parrant.models.schema import SemanticChangeKind
+from parrant.models.schema import ArtifactStamp, ArtifactStamps, SemanticChangeKind
 from parrant.lineage.display.markdown import render_changeset_markdown
 from parrant.lineage.service import LineageService
 
@@ -412,6 +413,88 @@ def test_structural_diff_available_requires_catalog_on_both_sides():
     no_catalog = _FakeRegistry({"m": _Model({"a": _Col("int")})}, catalog_backed=set())
     assert ChangesetBuilder(base, no_catalog).structural_diff_available() is False
     assert ChangesetBuilder(no_catalog, head).structural_diff_available() is False
+
+
+class _StampedRegistry(_FakeRegistry):
+    """A registry stub that also exposes artifact identity (fingerprint + stamps)."""
+
+    def __init__(
+        self,
+        fingerprint: Optional[str] = None,
+        catalog_generated_at: Optional[str] = None,
+        manifest_generated_at: Optional[str] = None,
+        catalog_invocation_id: Optional[str] = None,
+        manifest_invocation_id: Optional[str] = None,
+    ):
+        super().__init__({"m": _Model({"a": _Col("int")})})
+        self._fingerprint = fingerprint
+        self._stamps = ArtifactStamps(
+            catalog=ArtifactStamp(
+                generated_at=catalog_generated_at, invocation_id=catalog_invocation_id
+            ),
+            manifest=ArtifactStamp(
+                generated_at=manifest_generated_at, invocation_id=manifest_invocation_id
+            ),
+        )
+
+    def get_catalog_fingerprint(self) -> Optional[str]:
+        return self._fingerprint
+
+    def get_artifact_stamps(self) -> ArtifactStamps:
+        return self._stamps
+
+
+def test_detect_structural_degradation_on_identical_catalogs():
+    # ONE prod catalog mounted on both sides: removed/type_changed can never surface, so the
+    # report must carry an explicit degraded stamp instead of a confident silence.
+    base = _StampedRegistry(fingerprint="abc")
+    head = _StampedRegistry(fingerprint="abc")
+    status = detect_structural_degradation(base, head)
+    assert status is not None
+    assert status.status == "degraded"
+    assert "identical" in status.reason
+
+
+def test_detect_structural_degradation_none_on_distinct_catalogs():
+    base = _StampedRegistry(
+        fingerprint="abc",
+        catalog_generated_at="2026-01-01T00:00:10Z",
+        manifest_generated_at="2026-01-01T00:00:00Z",
+        catalog_invocation_id="inv-1",
+        manifest_invocation_id="inv-1",
+    )
+    head = _StampedRegistry(
+        fingerprint="def",
+        catalog_generated_at="2026-01-02T00:00:10Z",
+        manifest_generated_at="2026-01-02T00:00:00Z",
+        catalog_invocation_id="inv-2",
+        manifest_invocation_id="inv-2",
+    )
+    assert detect_structural_degradation(base, head) is None
+
+
+def test_detect_structural_degradation_on_stale_head_catalog():
+    # The head catalog predates the head manifest (and comes from a different dbt
+    # invocation): its column truth is stale, so structural checks are degraded.
+    base = _StampedRegistry(fingerprint="abc")
+    head = _StampedRegistry(
+        fingerprint="def",
+        catalog_generated_at="2026-01-01T00:00:00Z",
+        manifest_generated_at="2026-01-05T00:00:00Z",
+        catalog_invocation_id="inv-old",
+        manifest_invocation_id="inv-new",
+    )
+    status = detect_structural_degradation(base, head)
+    assert status is not None
+    assert status.status == "degraded"
+    assert "predates" in status.reason
+
+
+def test_detect_structural_degradation_silent_on_stub_registries():
+    # Providers that expose no artifact identity (lightweight stubs) make no claim.
+    base = _FakeRegistry({"m": _Model({"a": _Col("int")})})
+    head = _FakeRegistry({"m": _Model({"a": _Col("int")})})
+    assert detect_structural_degradation(base, head) is None
 
 
 # --- AST semantic-diff integration (Package B) -----------------------------

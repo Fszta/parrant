@@ -232,6 +232,59 @@ def test_impact_missing_head_sql_is_indeterminate_widens_and_degrades(
     assert "stg_accounts" in selection["rebuild_models"]
 
 
+def test_impact_identical_catalogs_stamp_structural_diff_degraded(dbt_artifacts, logic_change_base):
+    """ONE catalog mounted on both sides => removed/type_changed can never surface.
+
+    ``logic_change_base`` copies the head catalog unchanged, reproducing the real deployment
+    where a single prod catalog backs both sides. The report must say so explicitly.
+    """
+    args = [
+        "--manifest",
+        str(dbt_artifacts["manifest_path"]),
+        "--catalog",
+        str(dbt_artifacts["catalog_path"]),
+        "--base-manifest",
+        logic_change_base["manifest"],
+        "--base-catalog",
+        logic_change_base["catalog"],
+    ]
+    result = _run_impact([*args, "--format", "json"])
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+
+    stamp = payload.get("structural_diff")
+    assert stamp is not None, "identical base/head catalogs must stamp the report as degraded"
+    assert stamp["status"] == "degraded"
+    assert stamp["reason"]
+    assert payload["summary"]["structural_diff"] == "degraded"
+
+    # The markdown / PR-comment surface carries a visible honesty line too.
+    markdown = _run_impact(args)
+    assert markdown.exit_code == 0, markdown.output
+    assert "Structural diff degraded" in markdown.output
+
+
+def test_impact_distinct_catalogs_carry_no_degraded_stamp(dbt_artifacts, base_artifacts):
+    result = _run_impact(
+        [
+            "--manifest",
+            str(dbt_artifacts["manifest_path"]),
+            "--catalog",
+            str(dbt_artifacts["catalog_path"]),
+            "--base-manifest",
+            base_artifacts["manifest"],
+            "--base-catalog",
+            base_artifacts["catalog"],
+            "--format",
+            "json",
+        ]
+    )
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert "structural_diff" not in payload
+    assert "structural_diff" not in payload["summary"]
+
+
 def test_impact_two_manifest_markdown_default(dbt_artifacts, base_artifacts):
     result = _run_impact(
         [
