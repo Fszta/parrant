@@ -376,32 +376,104 @@ def test_scope_git_requires_base_manifest(dbt_artifacts):
     assert "scope-git" in result.output
 
 
-def test_scope_git_filters_to_changed_models(dbt_artifacts, base_artifacts, monkeypatch):
-    # The two-manifest diff detects a change on stg_accounts, but we scope to a
-    # git diff that touched no matching model -> the changeset is emptied.
+def _scope_git_args(dbt_artifacts, base_artifacts, *extra):
+    return [
+        "--manifest",
+        str(dbt_artifacts["manifest_path"]),
+        "--catalog",
+        str(dbt_artifacts["catalog_path"]),
+        "--base-manifest",
+        base_artifacts["manifest"],
+        "--base-catalog",
+        base_artifacts["catalog"],
+        "--scope-git",
+        "origin/main",
+        *extra,
+    ]
+
+
+def _json_report(result):
+    """Parse the JSON report from CliRunner output (stderr warnings may precede it)."""
+    output = result.output
+    return json.loads(output[output.index("{") :])
+
+
+def _patch_git_diff(monkeypatch, files):
     from parrant.lineage import changeset
 
     monkeypatch.setattr(
         changeset,
-        "_git_changed_sql_files",
-        lambda ref, repo_dir=None, git_head="HEAD": ["macros/only.sql"],
+        "_git_changed_files",
+        lambda ref, repo_dir=None, git_head="HEAD": files,
     )
-    result = _run_impact(
-        [
-            "--manifest",
-            str(dbt_artifacts["manifest_path"]),
-            "--catalog",
-            str(dbt_artifacts["catalog_path"]),
-            "--base-manifest",
-            base_artifacts["manifest"],
-            "--base-catalog",
-            base_artifacts["catalog"],
-            "--scope-git",
-            "origin/main",
-        ]
-    )
+
+
+def test_scope_git_filters_to_changed_models(dbt_artifacts, base_artifacts, monkeypatch):
+    # The two-manifest diff detects a change on stg_accounts, but the git diff only
+    # touched a DIFFERENT mapped model -> the changeset is legitimately emptied.
+    _patch_git_diff(monkeypatch, ["models/marts/transactions.sql"])
+    result = _run_impact(_scope_git_args(dbt_artifacts, base_artifacts))
     assert result.exit_code == 0, result.output
     assert "No column changes detected" in result.output
+
+
+def test_scope_git_keeps_changes_on_touched_model(dbt_artifacts, base_artifacts, monkeypatch):
+    # Regression: an ordinary model-.sql diff still scopes exactly as before.
+    _patch_git_diff(monkeypatch, ["models/staging/stg_accounts.sql"])
+    result = _run_impact(_scope_git_args(dbt_artifacts, base_artifacts, "--format", "json"))
+    assert result.exit_code == 0, result.output
+    report = _json_report(result)
+    changed_models = {c["model"] for c in report["changeset"]["changes"]}
+    assert changed_models == {"stg_accounts"}
+    assert report["scope_git"]["applied"] is True
+    assert report["scope_git"]["reason"] is None
+
+
+def test_scope_git_macro_only_diff_disables_scoping(dbt_artifacts, base_artifacts, monkeypatch):
+    # FAIL-SAFE: a macro can rewrite the compiled SQL of any model, so a macro-only
+    # diff must NOT empty the changeset into a silent SAFE. Scoping is disabled and
+    # the reason is visible in the JSON report.
+    _patch_git_diff(monkeypatch, ["macros/only.sql"])
+    result = _run_impact(_scope_git_args(dbt_artifacts, base_artifacts, "--format", "json"))
+    assert result.exit_code == 0, result.output
+    report = _json_report(result)
+    assert report["changeset"]["total_changes"] > 0
+    assert report["scope_git"]["applied"] is False
+    assert report["scope_git"]["reason"].startswith("disabled — unmappable changed files:")
+    assert "macros/only.sql" in report["scope_git"]["reason"]
+    assert "macros/only.sql" in report["scope_git"]["unmappable_files"]
+
+
+def test_scope_git_dbt_project_yml_disables_scoping(dbt_artifacts, base_artifacts, monkeypatch):
+    _patch_git_diff(monkeypatch, ["dbt_project.yml"])
+    result = _run_impact(_scope_git_args(dbt_artifacts, base_artifacts, "--format", "json"))
+    assert result.exit_code == 0, result.output
+    report = _json_report(result)
+    assert report["changeset"]["total_changes"] > 0
+    assert report["scope_git"]["applied"] is False
+    assert "dbt_project.yml" in report["scope_git"]["reason"]
+
+
+def test_scope_git_python_model_disables_scoping(dbt_artifacts, base_artifacts, monkeypatch):
+    # The bundled project has no Python models, so this .py cannot be mapped.
+    _patch_git_diff(monkeypatch, ["models/marts/py_scores.py"])
+    result = _run_impact(_scope_git_args(dbt_artifacts, base_artifacts, "--format", "json"))
+    assert result.exit_code == 0, result.output
+    report = _json_report(result)
+    assert report["changeset"]["total_changes"] > 0
+    assert report["scope_git"]["applied"] is False
+    assert "models/marts/py_scores.py" in report["scope_git"]["reason"]
+
+
+def test_scope_git_docs_only_diff_stays_scoped(dbt_artifacts, base_artifacts, monkeypatch):
+    # schema.yml / docs edits cannot alter compiled SQL: scoping stays on and
+    # legitimately narrows the (stale-base) changeset to nothing.
+    _patch_git_diff(monkeypatch, ["models/staging/models.yml", "README.md"])
+    result = _run_impact(_scope_git_args(dbt_artifacts, base_artifacts, "--format", "json"))
+    assert result.exit_code == 0, result.output
+    report = _json_report(result)
+    assert report["changeset"]["total_changes"] == 0
+    assert report["scope_git"]["applied"] is True
 
 
 def test_ci_no_change_passes_gate(dbt_artifacts, no_gh_env):

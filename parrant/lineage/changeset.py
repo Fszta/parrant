@@ -904,8 +904,130 @@ def scope_changes_to_models(changes: List[ColumnChange], models: Set[str]) -> Li
     return [change for change in changes if change.model in models]
 
 
+# Changed files that can influence models' compiled SQL. A change to one of these that
+# cannot be pinned to specific models makes git scoping unsound (see resolve_git_scope):
+#   *.sql  — a model (mappable) OR a macro/generic test that can rewrite ANY model's SQL
+#   *.py   — a Python model (mappable when in the manifest; otherwise unknown logic)
+#   *.csv  — a seed: column changes ripple into downstream models without any .sql edit
+_LOGIC_BEARING_SUFFIXES = (".sql", ".py", ".csv")
+# Project-level files whose edits (vars, packages, profiles/targets) can change the
+# compiled SQL of arbitrarily many models and are never mappable to one model.
+_LOGIC_BEARING_BASENAMES = frozenset(
+    {
+        "dbt_project.yml",
+        "dbt_project.yaml",
+        "packages.yml",
+        "packages.yaml",
+        "package-lock.yml",
+        "dependencies.yml",
+        "profiles.yml",
+        "profiles.yaml",
+    }
+)
+
+
+@dataclass
+class GitScopeResolution:
+    """How the git diff resolved for ``--scope-git``.
+
+    ``models`` is the union of models the diff could be pinned to (model files by
+    ``resource_path``, macros by their dependent models when the backend can map them).
+    ``unmappable`` lists logic-bearing changed files that could NOT be pinned to models;
+    when non-empty, narrowing the changeset to ``models`` is unsound and the caller must
+    disable scoping for the run (fail-safe) rather than silently drop changes.
+    Docs/property-only files (schema.yml, *.md, ...) influence neither compiled SQL nor
+    the catalog, so they are ignored and never disable scoping.
+    """
+
+    models: Set[str] = field(default_factory=set)
+    unmappable: List[str] = field(default_factory=list)
+
+
+def _is_logic_bearing(path: str) -> bool:
+    """Whether a changed file can influence some model's compiled SQL / columns."""
+    basename = path.rsplit("/", 1)[-1].lower()
+    return basename in _LOGIC_BEARING_BASENAMES or basename.endswith(_LOGIC_BEARING_SUFFIXES)
+
+
+def _macro_dependents_or_empty(head: LineageProvider) -> Dict[str, Set[str]]:
+    """Macro-file -> dependent-model map, when the backend can provide it.
+
+    Capability lookup (not part of the :class:`LineageProvider` protocol): backends that
+    cannot map macros return ``{}``, which downgrades macro changes to *unmappable* — the
+    fail-safe floor — instead of crashing or, worse, silently narrowing.
+    """
+    getter = getattr(head, "get_macro_dependents", None)
+    if not callable(getter):
+        return {}
+    try:
+        dependents = getter()
+    except Exception:  # pragma: no cover - honest degrade to the fail-safe floor
+        logger.warning("get_macro_dependents failed; macro changes treated as unmappable")
+        return {}
+    return dependents if isinstance(dependents, dict) else {}
+
+
+def resolve_git_scope(
+    head: LineageProvider,
+    git_base: str,
+    repo_dir: Optional[str] = None,
+    git_head: str = "HEAD",
+) -> GitScopeResolution:
+    """Classify the FULL git diff (not just ``*.sql``) for ``--scope-git``.
+
+    Unlike :func:`git_changed_models` (which silently ignores files it cannot map — fine
+    for the coarse ``--git-base`` fallback where unmapped files simply add no changes),
+    scoping *subtracts* from a correct two-manifest changeset, so it must prove that every
+    logic-bearing changed file was accounted for. Each changed file is either:
+
+    * mapped to a model via its ``resource_path`` (``.sql`` and ``.py`` models, seeds), or
+    * mapped to its dependent models via the manifest macro graph (when available), or
+    * logic-bearing but unmappable -> recorded in ``unmappable`` (disables scoping), or
+    * non-logic (schema.yml/docs/README/...) -> ignored.
+    """
+    path_to_model = _path_to_model_map(head)
+    macro_dependents = _macro_dependents_or_empty(head)
+    models: Set[str] = set()
+    unmappable: List[str] = []
+    for changed_file in _git_changed_files(git_base, repo_dir, git_head):
+        path = _norm_path(changed_file)
+        model = path_to_model.get(path)
+        if model:
+            models.add(model)
+            continue
+        if path in macro_dependents:
+            # Ceiling: the macro is known, so scope to every model it (transitively)
+            # feeds instead of disabling scoping outright.
+            models.update(macro_dependents[path])
+            continue
+        if _is_logic_bearing(path):
+            unmappable.append(path)
+    return GitScopeResolution(models=models, unmappable=unmappable)
+
+
 def _norm_path(path: str) -> str:
     return re.sub(r"^\./", "", path.strip()).lstrip("/")
+
+
+def _git_changed_files(git_base: str, repo_dir: Optional[str], git_head: str = "HEAD") -> List[str]:
+    """Every changed file between ``git_base`` and ``git_head`` (no pathspec filter).
+
+    :func:`resolve_git_scope` needs the complete diff — macros, Python models,
+    ``dbt_project.yml`` — not only the ``*.sql`` view that :func:`_git_changed_sql_files`
+    serves to the coarse git fallback and the backtest.
+    """
+    try:
+        result = subprocess.run(
+            ["git", "diff", "--name-only", f"{git_base}...{git_head}"],
+            cwd=repo_dir,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+    except (subprocess.CalledProcessError, FileNotFoundError) as exc:
+        raise RuntimeError(f"Failed to compute git diff against '{git_base}': {exc}") from exc
+
+    return [line.strip() for line in result.stdout.splitlines() if line.strip()]
 
 
 def _git_changed_sql_files(

@@ -1205,3 +1205,22 @@ class PolicyInitScan(BaseModel):
         """True when at least one model declares a ``config.grants.select`` — the signal that
         the config-axis (PII over-grant) template is worth offering."""
         return self.models_with_grants > 0
+
+
+class GitScopeStatus(BaseModel):
+    """Outcome of ``--scope-git``: was the git intersection applied, or disabled fail-safe?
+
+    Scoping intersects the two-manifest changeset with the models the branch touched,
+    mapped from the git diff. That mapping is only sound when EVERY logic-bearing changed
+    file resolves to specific models. A file that can rewrite compiled SQL project-wide
+    but cannot be pinned to models (an unmapped macro/``.sql``, a ``.py`` model absent
+    from the manifest, ``dbt_project.yml`` vars, ``packages.yml``, an unmapped seed
+    ``.csv``) makes narrowing unprovable — scoping is then DISABLED for the run and the
+    full changeset kept (fail-safe), with the reason surfaced here and in the report.
+    """
+
+    base: str
+    applied: bool
+    changed_models: List[str] = Field(default_factory=list)
+    unmappable_files: List[str] = Field(default_factory=list)
+    reason: Optional[str] = None

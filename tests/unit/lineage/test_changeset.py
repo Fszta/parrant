@@ -1189,6 +1189,140 @@ def test_scope_changes_empty_when_no_overlap():
     assert scope_changes_to_models(changes, {"orders"}) == []
 
 
+# --- git scope fail-safe -----------------------------------------------------
+#
+# --scope-git must never silently narrow the changeset when the branch touched a
+# file that can influence compiled SQL but cannot be mapped to a specific model
+# (macros, Python models, dbt_project.yml, ...). resolve_git_scope classifies the
+# FULL git diff and reports such files as `unmappable`, which the CLI uses to
+# disable scoping for the run (fail-safe: keep the full two-manifest changeset).
+
+
+def _patch_changed_files(monkeypatch, files):
+    from parrant.lineage import changeset
+
+    monkeypatch.setattr(
+        changeset,
+        "_git_changed_files",
+        lambda ref, repo_dir=None, git_head="HEAD": files,
+    )
+
+
+def test_resolve_git_scope_model_sql_maps(monkeypatch):
+    from parrant.lineage import changeset
+
+    _patch_changed_files(monkeypatch, ["models/orders.sql"])
+    scope = changeset.resolve_git_scope(_registry_with_paths(), "origin/main")
+    assert scope.models == {"orders"}
+    assert scope.unmappable == []
+
+
+def test_resolve_git_scope_macro_sql_is_unmappable(monkeypatch):
+    from parrant.lineage import changeset
+
+    _patch_changed_files(monkeypatch, ["macros/helper.sql", "models/orders.sql"])
+    scope = changeset.resolve_git_scope(_registry_with_paths(), "origin/main")
+    # The macro can rewrite any model's compiled SQL: scoping must not be trusted.
+    assert scope.unmappable == ["macros/helper.sql"]
+    assert scope.models == {"orders"}
+
+
+def test_resolve_git_scope_dbt_project_yml_is_unmappable(monkeypatch):
+    from parrant.lineage import changeset
+
+    _patch_changed_files(monkeypatch, ["dbt_project.yml"])
+    scope = changeset.resolve_git_scope(_registry_with_paths(), "origin/main")
+    assert scope.unmappable == ["dbt_project.yml"]
+
+
+def test_resolve_git_scope_packages_yml_is_unmappable(monkeypatch):
+    from parrant.lineage import changeset
+
+    _patch_changed_files(monkeypatch, ["packages.yml"])
+    scope = changeset.resolve_git_scope(_registry_with_paths(), "origin/main")
+    assert scope.unmappable == ["packages.yml"]
+
+
+def test_resolve_git_scope_unmapped_python_file_is_unmappable(monkeypatch):
+    from parrant.lineage import changeset
+
+    _patch_changed_files(monkeypatch, ["models/new_py_model.py"])
+    scope = changeset.resolve_git_scope(_registry_with_paths(), "origin/main")
+    assert scope.unmappable == ["models/new_py_model.py"]
+
+
+def test_resolve_git_scope_mapped_python_model_scopes(monkeypatch):
+    from parrant.lineage import changeset
+
+    registry = _PathRegistry(
+        {
+            "orders": _PathModel({"id": _Col("int")}, "models/orders.sql"),
+            "py_features": _PathModel({"id": _Col("int")}, "models/py_features.py"),
+        }
+    )
+    _patch_changed_files(monkeypatch, ["models/py_features.py"])
+    scope = changeset.resolve_git_scope(registry, "origin/main")
+    assert scope.models == {"py_features"}
+    assert scope.unmappable == []
+
+
+def test_resolve_git_scope_docs_only_diff_is_ignorable(monkeypatch):
+    from parrant.lineage import changeset
+
+    # Property/docs files do not alter compiled SQL: scoping stays trustworthy
+    # (and legitimately narrows the changeset to nothing).
+    _patch_changed_files(
+        monkeypatch,
+        ["models/staging/models.yml", "models/docs.md", "README.md"],
+    )
+    scope = changeset.resolve_git_scope(_registry_with_paths(), "origin/main")
+    assert scope.models == set()
+    assert scope.unmappable == []
+
+
+def test_resolve_git_scope_seed_csv_is_unmappable_when_unmapped(monkeypatch):
+    from parrant.lineage import changeset
+
+    # A seed column change can remove/retype downstream columns without any .sql
+    # edit, so an unmapped .csv must disable scoping too.
+    _patch_changed_files(monkeypatch, ["seeds/country_codes.csv"])
+    scope = changeset.resolve_git_scope(_registry_with_paths(), "origin/main")
+    assert scope.unmappable == ["seeds/country_codes.csv"]
+
+
+def test_resolve_git_scope_macro_maps_to_dependents_when_available(monkeypatch):
+    from parrant.lineage import changeset
+
+    class _MacroRegistry(_PathRegistry):
+        def get_macro_dependents(self):
+            return {"macros/helper.sql": {"orders", "customers"}}
+
+    registry = _MacroRegistry(
+        {
+            "orders": _PathModel({"id": _Col("int")}, "models/orders.sql"),
+            "customers": _PathModel({"id": _Col("int")}, "models/customers.sql"),
+        }
+    )
+    _patch_changed_files(monkeypatch, ["macros/helper.sql"])
+    scope = changeset.resolve_git_scope(registry, "origin/main")
+    # The macro is mapped to its dependent models: scoping stays on, widened to them.
+    assert scope.models == {"orders", "customers"}
+    assert scope.unmappable == []
+
+
+def test_resolve_git_scope_unknown_macro_still_unmappable(monkeypatch):
+    from parrant.lineage import changeset
+
+    class _MacroRegistry(_PathRegistry):
+        def get_macro_dependents(self):
+            return {"macros/helper.sql": {"orders"}}
+
+    registry = _MacroRegistry({"orders": _PathModel({"id": _Col("int")}, "models/orders.sql")})
+    _patch_changed_files(monkeypatch, ["macros/not_in_manifest.sql"])
+    scope = changeset.resolve_git_scope(registry, "origin/main")
+    assert scope.unmappable == ["macros/not_in_manifest.sql"]
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
 
