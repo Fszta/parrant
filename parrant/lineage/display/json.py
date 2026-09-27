@@ -1,9 +1,10 @@
 import json
-from typing import Any, Dict, Optional, Set, Union
+from typing import Any
 
 import click
 
 from parrant.models.schema import Column, ColumnLineage, Coverage
+
 from .base import LineageStaticDisplay
 
 # Keys in a lineage refs dict that hold plain string sets rather than
@@ -12,8 +13,8 @@ _SPECIAL_SET_KEYS = ("exposures", "sources", "direct_refs")
 
 
 def serialize_refs(
-    refs: Dict[str, Union[Dict[str, ColumnLineage], Set[str]]],
-) -> Dict[str, Any]:
+    refs: dict[str, dict[str, ColumnLineage] | set[str]],
+) -> dict[str, Any]:
     """Convert a lineage refs dict into a JSON-serializable structure.
 
     Produces a stable shape regardless of which special sets are present::
@@ -25,7 +26,7 @@ def serialize_refs(
             "exposures": [...],
         }
     """
-    models: Dict[str, Any] = {}
+    models: dict[str, Any] = {}
     sources: list = []
     direct_refs: list = []
     exposures: list = []
@@ -60,7 +61,7 @@ class JsonDisplay(LineageStaticDisplay):
     """
 
     def __init__(self) -> None:
-        self._result: Dict[str, Any] = {}
+        self._result: dict[str, Any] = {}
 
     def display_column_info(self, column: Column) -> None:
         self._result["model"] = column.model_name
@@ -68,7 +69,7 @@ class JsonDisplay(LineageStaticDisplay):
         self._result["data_type"] = column.data_type
         self._result["description"] = column.description
 
-    def set_model_description(self, description: Optional[str]) -> None:
+    def set_model_description(self, description: str | None) -> None:
         """Attach the selected column's parent model description (its dbt docs).
 
         Kept alongside the column's own ``description`` so an agent triaging
@@ -76,15 +77,13 @@ class JsonDisplay(LineageStaticDisplay):
         """
         self._result["model_description"] = description
 
-    def display_upstream(self, refs: Dict[str, Union[Dict[str, ColumnLineage], Set[str]]]) -> None:
+    def display_upstream(self, refs: dict[str, dict[str, ColumnLineage] | set[str]]) -> None:
         self._result["upstream"] = serialize_refs(refs)
 
-    def display_downstream(
-        self, refs: Dict[str, Union[Dict[str, ColumnLineage], Set[str]]]
-    ) -> None:
+    def display_downstream(self, refs: dict[str, dict[str, ColumnLineage] | set[str]]) -> None:
         self._result["downstream"] = serialize_refs(refs)
 
-    def set_impact(self, impact: Optional[Dict[str, Any]]) -> None:
+    def set_impact(self, impact: dict[str, Any] | None) -> None:
         """Attach impact-analysis results to the JSON document."""
         if impact is not None:
             self._result["impact"] = impact

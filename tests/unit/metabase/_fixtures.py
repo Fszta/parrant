@@ -11,24 +11,24 @@ import json
 import re
 import threading
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 RECORDED_PATH = Path(__file__).parents[2] / "resources" / "metabase" / "recorded.json"
 
 
-def load_recorded() -> Dict[str, Any]:
+def load_recorded() -> dict[str, Any]:
     return json.loads(RECORDED_PATH.read_text(encoding="utf-8"))
 
 
 def build_recorded(
     *,
-    cards: Optional[List[dict]] = None,
-    dashboards: Optional[List[dict]] = None,
-    dashboard_details: Optional[Dict[str, dict]] = None,
-    database_metadata: Optional[Dict[str, dict]] = None,
-    snippets: Optional[List[dict]] = None,
-    session_properties: Optional[dict] = None,
-) -> Dict[str, Any]:
+    cards: list[dict] | None = None,
+    dashboards: list[dict] | None = None,
+    dashboard_details: dict[str, dict] | None = None,
+    database_metadata: dict[str, dict] | None = None,
+    snippets: list[dict] | None = None,
+    session_properties: dict | None = None,
+) -> dict[str, Any]:
     """Assemble a full recorded-payload dict from inline parts, defaulting the rest.
 
     Every key :class:`FakeSession` may index is filled so a purpose-built corpus (a
@@ -46,7 +46,7 @@ def build_recorded(
 
 
 class FakeResponse:
-    def __init__(self, body: Any, status_code: int = 200, headers: Optional[dict] = None):
+    def __init__(self, body: Any, status_code: int = 200, headers: dict | None = None):
         self._body = body
         self.status_code = status_code
         self.headers = headers or {}
@@ -77,10 +77,10 @@ class FakeSession:
     a lock so the recorded ``(url, params)`` list never races or drops an entry.
     """
 
-    def __init__(self, recorded: Dict[str, Any], fail_first: int = 0):
+    def __init__(self, recorded: dict[str, Any], fail_first: int = 0):
         self.recorded = recorded
-        self.get_calls: List[tuple] = []
-        self.post_calls: List[tuple] = []
+        self.get_calls: list[tuple] = []
+        self.post_calls: list[tuple] = []
         self._remaining_failures = fail_first
         self._lock = threading.Lock()
 

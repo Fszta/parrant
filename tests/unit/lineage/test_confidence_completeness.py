@@ -7,8 +7,6 @@ These tests lock the honesty invariant: in machine output the lists are the full
 ``len(list) == count`` always, with the display-only ``*_truncated`` flags False.
 """
 
-from typing import Dict
-
 from parrant.models.schema import Column, Model
 from tests.unit.test_lineage_provider import InMemoryProvider, _model, _service_on
 
@@ -24,7 +22,7 @@ def _root_with_blind_downstream(n_blind: int, parse_failed_count: int = 0) -> In
         "root",
         {"id": Column(name="id", model_name="root", data_type="int")},
     )
-    models: Dict[str, Model] = {"root": root}
+    models: dict[str, Model] = {"root": root}
     blind_names = [f"d{i:03d}" for i in range(n_blind)]
     for name in blind_names:
         models[name] = _model(name, {})

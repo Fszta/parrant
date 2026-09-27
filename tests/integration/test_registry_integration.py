@@ -1,6 +1,7 @@
 from pathlib import Path
 
 import pytest
+
 from parrant.artifacts.registry import ModelRegistry
 
 
@@ -131,7 +132,7 @@ def test_select_star_lineage(registry):
     stg_model = models["stg_transactions"]
     int_model = models["int_transactions_enriched"]
 
-    for col_name, _ in stg_model.columns.items():
+    for col_name in stg_model.columns:
         assert (
             col_name in int_model.columns
         ), f"Column {col_name} from stg_transactions should exist in int_transactions_enriched"
@@ -213,7 +214,7 @@ def test_snapshot_support(registry):
         if not snapshots:
             pytest.skip("No snapshots found in registry. Ensure dbt snapshot has been run.")
         else:
-            snapshot_name = list(snapshots.keys())[0]
+            snapshot_name = next(iter(snapshots.keys()))
             snapshot = snapshots[snapshot_name]
     else:
         snapshot = models[snapshot_name]
@@ -354,8 +355,9 @@ def test_exposures_as_downstream_dependencies(registry):
 
 def test_impact_analysis(registry, dbt_artifacts):
     """Test impact analysis for a column - what would break if the column is modified."""
-    from parrant.lineage.service import LineageService
     from pathlib import Path
+
+    from parrant.lineage.service import LineageService
 
     service = LineageService(
         Path(dbt_artifacts["catalog_path"]), Path(dbt_artifacts["manifest_path"])

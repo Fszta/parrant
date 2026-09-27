@@ -10,8 +10,8 @@ import json
 
 import pytest
 
-from parrant.artifacts.registry import ModelRegistry
 from parrant.artifacts.exceptions import RegistryNotLoadedError
+from parrant.artifacts.registry import ModelRegistry
 
 
 def _write(tmp_path, catalog_data, manifest_data):

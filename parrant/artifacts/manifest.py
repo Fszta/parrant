@@ -1,12 +1,11 @@
 import json
 import os
 import re
-from typing import Dict, List, Optional, Set, Any
 from pathlib import Path
+from typing import Any
 
 from parrant.artifacts.adapter_mapping import normalize_adapter
 from parrant.models.schema import TestNode
-
 
 # Matches the quoted name(s) inside a dbt ``ref(...)`` expression, e.g.
 # ``ref('stg_accounts')`` or ``ref('my_pkg', 'stg_accounts')``. The *last* quoted
@@ -14,7 +13,7 @@ from parrant.models.schema import TestNode
 _REF_QUOTED_RE = re.compile(r"""['"]([^'"]+)['"]""")
 
 
-def _model_name_from_ref(ref_expr: Optional[str]) -> Optional[str]:
+def _model_name_from_ref(ref_expr: str | None) -> str | None:
     """Extract the model name from a dbt ``ref(...)`` expression string.
 
     Returns ``None`` when nothing quoted can be found (e.g. a ``source(...)`` target
@@ -28,7 +27,7 @@ def _model_name_from_ref(ref_expr: Optional[str]) -> Optional[str]:
     return matches[-1].lower()
 
 
-def _model_name_from_unique_id(unique_id: Optional[str]) -> Optional[str]:
+def _model_name_from_unique_id(unique_id: str | None) -> str | None:
     """Return the lowercased model name from a ``model.<pkg>.<name>`` unique_id."""
     if not unique_id:
         return None
@@ -39,13 +38,13 @@ def _model_name_from_unique_id(unique_id: Optional[str]) -> Optional[str]:
 
 
 class ManifestReader:
-    def __init__(self, manifest_path: Optional[str] = None):
+    def __init__(self, manifest_path: str | None = None):
         self.manifest_path = Path(manifest_path) if manifest_path else None
-        self.manifest: Dict[str, Any] = {}
+        self.manifest: dict[str, Any] = {}
         # Lazily-built index of on-disk compiled SQL keyed by filename (e.g. ``orders.sql``),
         # used to recover a model's compiled SQL when the manifest's ``original_file_path``
         # has drifted from the ``target/compiled`` layout (a model moved between builds).
-        self._compiled_index: Optional[Dict[str, List[Path]]] = None
+        self._compiled_index: dict[str, list[Path]] | None = None
 
     def load(self) -> None:
         if not self.manifest_path or not self.manifest_path.exists():
@@ -53,21 +52,21 @@ class ManifestReader:
         with open(self.manifest_path, "r") as f:
             self.manifest = json.load(f)
 
-    def get_adapter(self) -> Optional[str]:
+    def get_adapter(self) -> str | None:
         adapter_name = self.manifest.get("metadata", {}).get("adapter_type")
         return normalize_adapter(adapter_name)
 
-    def _find_node(self, model_name: str) -> Optional[Dict[str, Any]]:
+    def _find_node(self, model_name: str) -> dict[str, Any] | None:
         """Find a node in the manifest by model name."""
         if not self.manifest:
             return None
         model_name_lower = model_name.lower()
-        for _, node in self.manifest.get("nodes", {}).items():
+        for node in self.manifest.get("nodes", {}).values():
             if node.get("name", "").lower() == model_name_lower:
                 return dict(node)
         return None
 
-    def get_model_dependencies(self) -> Dict[str, Set[str]]:
+    def get_model_dependencies(self) -> dict[str, set[str]]:
         """Return a dictionary of model dependencies with full model names.
 
         Returns:
@@ -81,11 +80,11 @@ class ManifestReader:
             dependencies[model_id] = depends_on
         return dependencies
 
-    def get_model_upstream(self) -> Dict[str, Set[str]]:
+    def get_model_upstream(self) -> dict[str, set[str]]:
         """Get upstream dependencies for each model."""
-        upstream: Dict[str, Set[str]] = {}
+        upstream: dict[str, set[str]] = {}
 
-        for _, node in self.manifest.get("nodes", {}).items():
+        for node in self.manifest.get("nodes", {}).values():
             resource_type = node.get("resource_type")
             if resource_type in ("model", "snapshot"):
                 model_name = node.get("name")
@@ -116,9 +115,9 @@ class ManifestReader:
 
         return upstream
 
-    def get_model_downstream(self) -> Dict[str, Set[str]]:
+    def get_model_downstream(self) -> dict[str, set[str]]:
         """Return a dictionary of model downstream dependencies."""
-        downstream: Dict[str, Set[str]] = {}
+        downstream: dict[str, set[str]] = {}
 
         upstream_deps = self.get_model_upstream()
 
@@ -130,7 +129,7 @@ class ManifestReader:
 
         return downstream
 
-    def _resolve_compiled_file(self, node: Dict[str, Any]) -> Optional[Path]:
+    def _resolve_compiled_file(self, node: dict[str, Any]) -> Path | None:
         """Locate the on-disk compiled SQL file for a node.
 
         Many real manifests are produced without embedded ``compiled_code`` (e.g.
@@ -175,9 +174,7 @@ class ManifestReader:
             return self._recover_compiled_by_name(Path(original_file_path).name, package_name)
         return None
 
-    def _recover_compiled_by_name(
-        self, filename: str, package_name: Optional[str]
-    ) -> Optional[Path]:
+    def _recover_compiled_by_name(self, filename: str, package_name: str | None) -> Path | None:
         """Find an on-disk compiled file by its ``<model>.sql`` name, unambiguously.
 
         Prefers a single match under the model's own package dir; otherwise accepts a single
@@ -195,11 +192,11 @@ class ManifestReader:
                 return scoped[0]
         return matches[0] if len(matches) == 1 else None
 
-    def _compiled_basename_index(self) -> Dict[str, List[Path]]:
+    def _compiled_basename_index(self) -> dict[str, list[Path]]:
         """Lazily index ``target/compiled/**/*.sql`` by filename → list of paths."""
         if self._compiled_index is not None:
             return self._compiled_index
-        index: Dict[str, List[Path]] = {}
+        index: dict[str, list[Path]] = {}
         if self.manifest_path:
             compiled_dir = self.manifest_path.parent / "compiled"
             if compiled_dir.is_dir():
@@ -208,7 +205,7 @@ class ManifestReader:
         self._compiled_index = index
         return index
 
-    def get_compiled_sql(self, model_name: str) -> Optional[str]:
+    def get_compiled_sql(self, model_name: str) -> str | None:
         """Get compiled SQL for a model.
 
         Prefers SQL embedded in the manifest, falling back to the compiled file on
@@ -233,8 +230,8 @@ class ManifestReader:
 
     @staticmethod
     def _merged_meta(
-        top_meta: Optional[Dict[str, Any]], config_meta: Optional[Dict[str, Any]]
-    ) -> Dict[str, Any]:
+        top_meta: dict[str, Any] | None, config_meta: dict[str, Any] | None
+    ) -> dict[str, Any]:
         """Merge a node's two dbt meta locations, ``config.meta`` winning over top-level.
 
         dbt exposes user-authored meta at both ``node.meta`` (legacy) and
@@ -242,14 +239,14 @@ class ManifestReader:
         ``config`` value is authoritative (it is what dbt itself resolves). Neither
         present yields an empty dict — meta is *absent*, never guessed.
         """
-        merged: Dict[str, Any] = {}
+        merged: dict[str, Any] = {}
         if isinstance(top_meta, dict):
             merged.update(top_meta)
         if isinstance(config_meta, dict):
             merged.update(config_meta)
         return merged
 
-    def get_model_meta(self, model_name: str) -> Dict[str, Any]:
+    def get_model_meta(self, model_name: str) -> dict[str, Any]:
         """Merged user-authored dbt ``meta`` for a model (``config.meta`` over ``meta``).
 
         This is arbitrary consumer metadata — ANY key an author declared — captured
@@ -262,7 +259,7 @@ class ManifestReader:
         config = node.get("config") or {}
         return self._merged_meta(node.get("meta"), config.get("meta"))
 
-    def get_model_config(self, model_name: str) -> Dict[str, Any]:
+    def get_model_config(self, model_name: str) -> dict[str, Any]:
         """The node's resolved dbt ``config`` dict for a model (``node.config``).
 
         This is the generic dbt config surface — ``grants``, ``materialized``, ``tags``,
@@ -276,7 +273,7 @@ class ManifestReader:
         config = node.get("config") or {}
         return dict(config) if isinstance(config, dict) else {}
 
-    def get_column_meta(self, model_name: str) -> Dict[str, Dict[str, Any]]:
+    def get_column_meta(self, model_name: str) -> dict[str, dict[str, Any]]:
         """Per-column merged user meta for a model, keyed by lowercased column name.
 
         Each column's meta merges ``columns.<c>.config.meta`` over ``columns.<c>.meta``
@@ -287,7 +284,7 @@ class ManifestReader:
         node = self._find_node(model_name)
         if not node:
             return {}
-        result: Dict[str, Dict[str, Any]] = {}
+        result: dict[str, dict[str, Any]] = {}
         for col_name, col_data in (node.get("columns") or {}).items():
             col_data = col_data or {}
             col_config = col_data.get("config") or {}
@@ -296,7 +293,7 @@ class ManifestReader:
             )
         return result
 
-    def get_model_path(self, model_name: str) -> Optional[str]:
+    def get_model_path(self, model_name: str) -> str | None:
         """Get the path to the model from the manifest."""
         node = self._find_node(model_name)
         if not node:
@@ -304,27 +301,27 @@ class ManifestReader:
 
         return node.get("path")
 
-    def get_model_language(self, model_name: str) -> Optional[str]:
+    def get_model_language(self, model_name: str) -> str | None:
         """Get the language of a model from the manifest."""
         node = self._find_node(model_name)
         if not node:
             return None
         return node.get("language")
 
-    def get_model_resource_path(self, model_name: str) -> Optional[str]:
+    def get_model_resource_path(self, model_name: str) -> str | None:
         """Get the original file path of a model from the manifest."""
         node = self._find_node(model_name)
         if not node:
             return None
         return node.get("original_file_path")
 
-    def get_node(self, node_id: str) -> Optional[Dict[str, Any]]:
+    def get_node(self, node_id: str) -> dict[str, Any] | None:
         node = self.manifest.get("nodes", {}).get(node_id)
         if node is None:
             return None
         return dict(node)
 
-    def get_tests(self) -> List[TestNode]:
+    def get_tests(self) -> list[TestNode]:
         """Read dbt test nodes (``resource_type == "test"``) from the manifest.
 
         We never run the tests; we read what they *declare*. For each test we extract:
@@ -339,7 +336,7 @@ class ManifestReader:
         unknown field set to ``None`` (never guessed), so the reverse index can report
         coverage honestly.
         """
-        tests: List[TestNode] = []
+        tests: list[TestNode] = []
 
         for node_id, node in self.manifest.get("nodes", {}).items():
             if node.get("resource_type") != "test":
@@ -375,8 +372,8 @@ class ManifestReader:
                 if len(model_deps) == 1:
                     target_model = model_deps[0]
 
-            referenced_model: Optional[str] = None
-            referenced_column: Optional[str] = None
+            referenced_model: str | None = None
+            referenced_column: str | None = None
             if test_name == "relationships":
                 referenced_model = _model_name_from_ref(kwargs.get("to"))
                 field = kwargs.get("field")
@@ -397,7 +394,7 @@ class ManifestReader:
 
         return tests
 
-    def get_exposures(self) -> Dict[str, Dict[str, Any]]:
+    def get_exposures(self) -> dict[str, dict[str, Any]]:
         """Get all exposures from the manifest.
 
         Returns:
@@ -405,15 +402,15 @@ class ManifestReader:
         """
         return self.manifest.get("exposures", {})
 
-    def get_exposure_dependencies(self) -> Dict[str, Set[str]]:
+    def get_exposure_dependencies(self) -> dict[str, set[str]]:
         """Get model dependencies for each exposure.
 
         Returns:
             Dict[str, Set[str]]: Key is exposure name, value is set of model names it depends on
         """
-        exposure_deps: Dict[str, Set[str]] = {}
+        exposure_deps: dict[str, set[str]] = {}
 
-        for exposure_id, exposure_data in self.manifest.get("exposures", {}).items():
+        for exposure_data in self.manifest.get("exposures", {}).values():
             exposure_name = exposure_data.get("name")
             if not exposure_name:
                 continue
@@ -440,13 +437,13 @@ class ManifestReader:
 
         return exposure_deps
 
-    def get_model_exposures(self) -> Dict[str, Set[str]]:
+    def get_model_exposures(self) -> dict[str, set[str]]:
         """Get exposures that depend on each model.
 
         Returns:
             Dict[str, Set[str]]: Key is model name, value is set of exposure names that depend on it
         """
-        model_exposures: Dict[str, Set[str]] = {}
+        model_exposures: dict[str, set[str]] = {}
 
         exposure_deps = self.get_exposure_dependencies()
 

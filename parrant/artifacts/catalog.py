@@ -1,13 +1,14 @@
-from pathlib import Path
-from typing import Dict, Any
 import json
+from pathlib import Path
+from typing import Any
+
 from parrant.models.schema import Model
 
 
 class CatalogReader:
     def __init__(self, catalog_path: str):
         self.catalog_path = Path(catalog_path)
-        self.catalog: Dict[str, Any] = {}
+        self.catalog: dict[str, Any] = {}
 
     def load(self) -> None:
         if not self.catalog_path.exists():
@@ -15,7 +16,7 @@ class CatalogReader:
         with open(self.catalog_path, "r") as f:
             self.catalog = json.load(f)
 
-    def get_models_nodes(self) -> Dict[str, Model]:
+    def get_models_nodes(self) -> dict[str, Model]:
         models = {}
         nodes = self.catalog.get("nodes", {})
         sources = self.catalog.get("sources", {})

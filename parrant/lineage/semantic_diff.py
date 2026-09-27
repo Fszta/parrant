@@ -76,7 +76,7 @@ def comment_free_token_signature(expr_sql: str, dialect: str | None = None) -> s
     """
     try:
         tokens = tokenize(expr_sql, dialect=dialect)
-    except Exception:  # noqa: BLE001 - fail-safe: any tokenize failure -> None (no lexical proof)
+    except Exception:
         return None
     return _TOKEN_RECORD_SEP.join(
         f"{token.token_type.name}{_TOKEN_FIELD_SEP}{token.text}" for token in tokens
@@ -100,7 +100,7 @@ def canonicalize_expression(expr_sql: str, dialect: str | None = None) -> exp.Ex
     """
     try:
         expression = parse_one(expr_sql, dialect=dialect)
-    except Exception:  # noqa: BLE001 - fail-safe: any parse failure -> None (indeterminate)
+    except Exception:
         return None
 
     return normalize_identifiers(expression, dialect=dialect)

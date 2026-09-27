@@ -33,7 +33,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any, Dict, List, Tuple
+from typing import Any
 
 _PROJECT = "demo"
 _DB = "DB"
@@ -132,9 +132,9 @@ def _manifest_node(
     name: str,
     schema: str,
     compiled_code: str,
-    depends_on_nodes: List[str],
-    columns: List[str],
-) -> Tuple[str, Dict[str, Any]]:
+    depends_on_nodes: list[str],
+    columns: list[str],
+) -> tuple[str, dict[str, Any]]:
     unique_id = f"model.{_PROJECT}.{name}"
     return unique_id, {
         "unique_id": unique_id,
@@ -156,10 +156,10 @@ def _manifest_node(
     }
 
 
-def build_manifest() -> Dict[str, Any]:
+def build_manifest() -> dict[str, Any]:
     source_id = f"source.{_PROJECT}.src_x.raw_x"
 
-    nodes: Dict[str, Any] = {}
+    nodes: dict[str, Any] = {}
     for uid, node in [
         _manifest_node(
             name="stg_a",
@@ -228,7 +228,7 @@ def build_manifest() -> Dict[str, Any]:
     }
 
 
-def _catalog_node(*, name: str, schema: str, columns: List[str]) -> Tuple[str, Dict[str, Any]]:
+def _catalog_node(*, name: str, schema: str, columns: list[str]) -> tuple[str, dict[str, Any]]:
     unique_id = f"model.{_PROJECT}.{name}"
     return unique_id, {
         "metadata": {"name": name, "schema": schema, "database": _DB, "type": "BASE TABLE"},
@@ -236,10 +236,10 @@ def _catalog_node(*, name: str, schema: str, columns: List[str]) -> Tuple[str, D
     }
 
 
-def build_catalog() -> Dict[str, Any]:
+def build_catalog() -> dict[str, Any]:
     # Only the models that must be catalog-backed. `stg_d` is deliberately catalog-missing
     # (its columns are recovered from compiled SQL).
-    nodes: Dict[str, Any] = {}
+    nodes: dict[str, Any] = {}
     for uid, node in [
         _catalog_node(name="stg_a", schema="STG", columns=["col_1", "col_2", "col_3"]),
         _catalog_node(name="stg_b", schema="STG", columns=["v"]),
@@ -270,7 +270,7 @@ def build_catalog() -> Dict[str, Any]:
     }
 
 
-def write_fixtures(target_dir: Path) -> Tuple[Path, Path]:
+def write_fixtures(target_dir: Path) -> tuple[Path, Path]:
     """Write the manifest + catalog into ``target_dir`` and return their paths."""
     target_dir = Path(target_dir)
     manifest_path = target_dir / "manifest.json"

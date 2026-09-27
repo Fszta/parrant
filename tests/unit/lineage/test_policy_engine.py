@@ -1191,11 +1191,11 @@ def test_semantic_knobs_fold_into_user_rules_most_severe_wins():
 
 # --- override caps -------------------------------------------------------
 
-from parrant.lineage.policy import (  # noqa: E402
+from parrant.lineage.policy import (
     applied_policy_overrides,
     ineffective_policy_overrides,
 )
-from parrant.models.schema import OverrideDirective, OverrideVerb  # noqa: E402
+from parrant.models.schema import OverrideDirective, OverrideVerb
 
 
 def _ov(verb, column, reason="ack"):
@@ -1272,18 +1272,16 @@ def test_applied_policy_overrides_shape_matches_default_gate():
     records = applied_policy_overrides(verdict, [change])
     assert len(records) == 1
     r = records[0]
-    assert set(
-        [
-            "model",
-            "column",
-            "verb",
-            "reason",
-            "downgraded_from",
-            "downgraded_to",
-            "source_line",
-            "scope",
-        ]
-    ) <= set(r.keys())
+    assert {
+        "model",
+        "column",
+        "verb",
+        "reason",
+        "downgraded_from",
+        "downgraded_to",
+        "source_line",
+        "scope",
+    } <= set(r.keys())
     assert r["verb"] == "allow-change"
     assert r["downgraded_from"] == "block"
     assert r["downgraded_to"] == "allow"

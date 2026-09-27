@@ -26,7 +26,7 @@ and idempotent, so it is always safe to run at resolver entry.
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 # Ref heads whose ``[head, opts, target]`` pMBQL form reorders to legacy ``[head, target, opts]``.
 _REF_HEADS = {"field", "expression", "aggregation"}
@@ -69,9 +69,9 @@ def normalize_dataset_query(query: dict) -> dict:
     return {"type": "query", "database": database, "query": _fold_stages(stages)}
 
 
-def _fold_stages(stages: List[dict]) -> dict:
+def _fold_stages(stages: list[dict]) -> dict:
     """Fold innermost-first ``stages`` into legacy nested ``source-query`` form."""
-    folded: Optional[dict] = None
+    folded: dict | None = None
     for stage in stages:
         if not isinstance(stage, dict):
             continue
@@ -84,7 +84,7 @@ def _fold_stages(stages: List[dict]) -> dict:
 
 def _normalize_stage(stage: dict) -> dict:
     """Convert one ``mbql.stage/mbql`` stage into a legacy query dict."""
-    out: Dict[str, Any] = {}
+    out: dict[str, Any] = {}
     _set_source(out, stage.get("source-table"), stage.get("source-card"))
 
     for key in ("breakout", "aggregation", "fields", "order-by", "expressions"):
@@ -106,7 +106,7 @@ def _normalize_stage(stage: dict) -> dict:
 
 def _normalize_join(join: dict) -> dict:
     """Convert a pMBQL join to the legacy ``{source-table, condition, alias}`` shape."""
-    out: Dict[str, Any] = {}
+    out: dict[str, Any] = {}
     alias = join.get("alias") or join.get("join-alias")
     if alias:
         out["alias"] = alias
@@ -131,7 +131,7 @@ def _normalize_join(join: dict) -> dict:
     return out
 
 
-def _set_source(out: Dict[str, Any], source_table: Any, source_card: Any) -> None:
+def _set_source(out: dict[str, Any], source_table: Any, source_card: Any) -> None:
     """Write the legacy ``source-table`` key (``card__<id>`` for an upstream card)."""
     if isinstance(source_card, int):
         out["source-table"] = f"card__{source_card}"
@@ -169,7 +169,7 @@ def _clean_opts(opts: dict) -> dict:
     return {key: value for key, value in opts.items() if key not in _OPTS_NOISE}
 
 
-def _normalize_template_tags(tags: Any) -> Dict[str, Any]:
+def _normalize_template_tags(tags: Any) -> dict[str, Any]:
     """Convert a pMBQL template-tags **list** into the legacy **dict** keyed by tag name.
 
     A dimension tag's ``dimension`` value is a pMBQL field ref → reorder it per the ref rule.
@@ -179,7 +179,7 @@ def _normalize_template_tags(tags: Any) -> Dict[str, Any]:
         return tags
     if not isinstance(tags, list):
         return {}
-    out: Dict[str, Any] = {}
+    out: dict[str, Any] = {}
     for tag in tags:
         if not isinstance(tag, dict):
             continue

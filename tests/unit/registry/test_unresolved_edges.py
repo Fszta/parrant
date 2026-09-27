@@ -17,7 +17,7 @@ from parrant.artifacts.registry import ModelRegistry
 
 _FIXTURE_DIR = Path(__file__).parents[2] / "fixtures" / "unresolved_edges"
 sys.path.insert(0, str(_FIXTURE_DIR))
-import _build  # type: ignore[import-not-found]  # noqa: E402  (path-injected fixture builder)
+import _build  # type: ignore[import-not-found]
 
 # Materialize the manifest + catalog once into a tmp dir for the whole module.
 _TMP = tempfile.TemporaryDirectory()
@@ -146,9 +146,7 @@ def test_fabricated_detection_keeps_legit_passthrough_failsafe():
     assert "stg_b.v" in sources  # kept — column exists upstream
     assert not any("fab_" in token for token in sources)  # fabricated tokens dropped
 
-    fabricated_details = {
-        m["detail"] for m in _markers(model) if m["column"] == "g_owner"
-    }
+    fabricated_details = {m["detail"] for m in _markers(model) if m["column"] == "g_owner"}
     assert fabricated_details == {
         "stg_a.fab_v1",
         "stg_a.fab_v2",

@@ -5,12 +5,12 @@ The 100-name cap is a DISPLAY concern only. The renderer shows at most the cap, 
 completeness of the machine lists the JSON surface already emitted.
 """
 
-from typing import Any, Dict, List
+from typing import Any
 
 from parrant.lineage.display.markdown import render_changeset_markdown
 
 
-def _report_with_unanalyzable(names: List[str]) -> Dict[str, Any]:
+def _report_with_unanalyzable(names: list[str]) -> dict[str, Any]:
     return {
         "summary": {"affected_models": 0, "affected_columns": 0},
         "changeset": {"total_changes": 1, "by_kind": {"logic_changed": 1}},

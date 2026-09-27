@@ -13,10 +13,10 @@ deliberately out of scope.
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any
 
-from parrant.lineage.provider import LineageAndMetadataProvider, LineageProvider
 from parrant.lineage.changeset import ChangeKind, ColumnChange
+from parrant.lineage.provider import LineageAndMetadataProvider, LineageProvider
 from parrant.models.schema import BreakFinding, OverrideVerb, TestNode
 
 # Change kinds that can orphan a test by making the column disappear. A rename is emitted by
@@ -39,10 +39,10 @@ def _column_missing_in_head(head: LineageProvider, model: str, column: str) -> b
 
 
 def classify_provable_breaks(
-    changes: List[ColumnChange],
+    changes: list[ColumnChange],
     head_registry: LineageAndMetadataProvider,
-    base_registry: Optional[LineageAndMetadataProvider] = None,
-) -> List[BreakFinding]:
+    base_registry: LineageAndMetadataProvider | None = None,
+) -> list[BreakFinding]:
     """Return the dbt tests that a changeset provably breaks (BREAK-TEST).
 
     For each removed/renamed column we look up the tests that targeted it in the *base*
@@ -63,10 +63,10 @@ def classify_provable_breaks(
     """
     source = base_registry or head_registry
     head_test_ids = head_registry.get_test_unique_ids()
-    findings: List[BreakFinding] = []
+    findings: list[BreakFinding] = []
     # Dedup across the whole changeset: a relationships test whose child column AND
     # referenced parent key are both removed in one PR must count once, not twice.
-    seen: Set[str] = set()
+    seen: set[str] = set()
 
     def _emit(model: str, column: str, kind: str, test: TestNode, via_reference: bool) -> None:
         # Only a test that survives into head (still declared) can actually fail on build.
@@ -118,7 +118,7 @@ def classify_provable_breaks(
     return findings
 
 
-def _has_meaning_shift(changes: Optional[List[ColumnChange]]) -> bool:
+def _has_meaning_shift(changes: list[ColumnChange] | None) -> bool:
     """True when any NON-overridden change carries a proven-or-unprovable meaning shift.
 
     An ``EQUIVALENT`` edit is never emitted as a change, so a *set* ``semantic`` is always
@@ -134,7 +134,7 @@ def _has_meaning_shift(changes: Optional[List[ColumnChange]]) -> bool:
     )
 
 
-def break_is_overridden(break_finding: BreakFinding, changes: Optional[List[ColumnChange]]) -> bool:
+def break_is_overridden(break_finding: BreakFinding, changes: list[ColumnChange] | None) -> bool:
     """True when the change matching this provable break carries an ``allow-break`` override.
 
     Fail-safe: only the hard ``allow-break`` verb can demote a break — ``allow-change`` never
@@ -155,7 +155,7 @@ def break_is_overridden(break_finding: BreakFinding, changes: Optional[List[Colu
     return False
 
 
-def unexcused_break_count(breaks: List[BreakFinding], changes: Optional[List[ColumnChange]]) -> int:
+def unexcused_break_count(breaks: list[BreakFinding], changes: list[ColumnChange] | None) -> int:
     """Number of provable breaks NOT excused by an ``allow-break`` override.
 
     This is the count the CI gate (``--fail-on tests``) must read: an acknowledged break is
@@ -168,10 +168,10 @@ def unexcused_break_count(breaks: List[BreakFinding], changes: Optional[List[Col
 _REACHING_MECHANISMS = ("derived_recompute", "rowset_filter")
 
 
-def _reaching_change_keys(by_change: Optional[List[Dict[str, Any]]]) -> Set[Tuple[str, str, str]]:
+def _reaching_change_keys(by_change: list[dict[str, Any]] | None) -> set[tuple[str, str, str]]:
     """``(model, column, kind)`` keys of changes that reach a recompute/row-set column or an
     exposure — i.e. the changes that drive a blast-radius REVIEW."""
-    keys: Set[Tuple[str, str, str]] = set()
+    keys: set[tuple[str, str, str]] = set()
     for entry in by_change or []:
         if not entry.get("resolved"):
             continue
@@ -186,7 +186,7 @@ def _reaching_change_keys(by_change: Optional[List[Dict[str, Any]]]) -> Set[Tupl
     return keys
 
 
-def _change_reaches(change: ColumnChange, reaching_keys: Set[Tuple[str, str, str]]) -> bool:
+def _change_reaches(change: ColumnChange, reaching_keys: set[tuple[str, str, str]]) -> bool:
     """Whether a change contributes to the REVIEW tier: it meaning-shifts, or it reaches a
     recompute/row-set column or an exposure (per ``by_change``)."""
     if change.semantic is not None and change.semantic.is_breaking:
@@ -195,7 +195,7 @@ def _change_reaches(change: ColumnChange, reaching_keys: Set[Tuple[str, str, str
 
 
 def _all_reaching_overridden(
-    changes: List[ColumnChange], by_change: Optional[List[Dict[str, Any]]]
+    changes: list[ColumnChange], by_change: list[dict[str, Any]] | None
 ) -> bool:
     """True only when EVERY change that drives a blast-radius review carries an override.
 
@@ -213,10 +213,10 @@ def _all_reaching_overridden(
 
 
 def decide_verdict(
-    breaks: List[BreakFinding],
-    summary: Dict[str, Any],
-    changes: Optional[List[ColumnChange]] = None,
-    by_change: Optional[List[Dict[str, Any]]] = None,
+    breaks: list[BreakFinding],
+    summary: dict[str, Any],
+    changes: list[ColumnChange] | None = None,
+    by_change: list[dict[str, Any]] | None = None,
 ) -> str:
     """Collapse breaks + blast-radius summary + semantic axis into a single ruling.
 
@@ -272,7 +272,7 @@ def decide_verdict(
 
 def _applied_record(
     change: ColumnChange, downgraded_from: str, downgraded_to: str
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """A unified honored-override record. Same shape as the policy path so the report's
     ``overrides`` block and the ``overrides_applied`` count never diverge across the two gates."""
     override = change.override
@@ -303,7 +303,7 @@ def override_hint(change: ColumnChange, is_break: bool) -> str:
     return "matched a change that neither breaks nor reaches anything — safe to remove"
 
 
-def ineffective_override_record(change: ColumnChange, is_break: bool) -> Dict[str, Any]:
+def ineffective_override_record(change: ColumnChange, is_break: bool) -> dict[str, Any]:
     """A unified no-op override record (same base skeleton + a ``hint``)."""
     override = change.override
     assert override is not None
@@ -315,16 +315,16 @@ def ineffective_override_record(change: ColumnChange, is_break: bool) -> Dict[st
 
 
 def applied_overrides(
-    changes: List[ColumnChange],
-    breaks: List[BreakFinding],
-    by_change: Optional[List[Dict[str, Any]]] = None,
-) -> List[Dict[str, Any]]:
+    changes: list[ColumnChange],
+    breaks: list[BreakFinding],
+    by_change: list[dict[str, Any]] | None = None,
+) -> list[dict[str, Any]]:
     """Honored-override records for the DEFAULT (no-policy) gate — one per override that
     actually lowered its change's contribution. Overrides that changed nothing are skipped
     here and surface via :func:`ineffective_overrides` instead."""
     break_keys = {(b.change_model.lower(), b.change_column.lower()) for b in breaks}
     reaching = _reaching_change_keys(by_change)
-    records: List[Dict[str, Any]] = []
+    records: list[dict[str, Any]] = []
     for change in changes:
         if change.override is None:
             continue
@@ -340,16 +340,16 @@ def applied_overrides(
 
 
 def ineffective_overrides(
-    changes: List[ColumnChange],
-    breaks: List[BreakFinding],
-    by_change: Optional[List[Dict[str, Any]]] = None,
-) -> List[Dict[str, Any]]:
+    changes: list[ColumnChange],
+    breaks: list[BreakFinding],
+    by_change: list[dict[str, Any]] | None = None,
+) -> list[dict[str, Any]]:
     """Override records that resolved to a REAL changed column but produced NO effect (the
     rename black-hole and friends). Distinct from stale overrides (no matching change at all),
     these must surface so the author isn't silently ignored."""
     break_keys = {(b.change_model.lower(), b.change_column.lower()) for b in breaks}
     reaching = _reaching_change_keys(by_change)
-    records: List[Dict[str, Any]] = []
+    records: list[dict[str, Any]] = []
     for change in changes:
         if change.override is None:
             continue

@@ -1,4 +1,4 @@
-""" unit tests — the offline relation join and the ``(model,column) -> card -> dashboard``
+"""unit tests — the offline relation join and the ``(model,column) -> card -> dashboard``
 reach index. Pure (no dbt build), so they run under ``test-unit``."""
 
 from __future__ import annotations

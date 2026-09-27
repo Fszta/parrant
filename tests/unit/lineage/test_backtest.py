@@ -36,7 +36,6 @@ from parrant.models.schema import (
     SemanticChangeKind,
 )
 
-
 # --- git enumeration --------------------------------------------------------
 
 

@@ -31,7 +31,6 @@ from parrant.models.schema import (
     SemanticChangeKind,
 )
 
-
 # --- fakes ------------------------------------------------------------------
 
 
@@ -235,7 +234,9 @@ def test_secret_or_propagates_but_own_false_halts():
     prop_lookup = MetaIndex(prop).inferred_meta("mart", "token", "secret")
     assert prop_lookup.present is True
     assert prop_lookup.value is True
-    assert _engine(_inferred_policy(key="secret"), prop).evaluate([_change("mart", "token")]).blocks()
+    assert (
+        _engine(_inferred_policy(key="secret"), prop).evaluate([_change("mart", "token")]).blocks()
+    )
 
     # (b) downstream own secret:false wins over an upstream secret:true.
     halt = FakeRegistry(
@@ -245,7 +246,9 @@ def test_secret_or_propagates_but_own_false_halts():
     halt_lookup = MetaIndex(halt).inferred_meta("mart", "token", "secret")
     assert halt_lookup.present is True
     assert halt_lookup.value is False
-    halt_verdict = _engine(_inferred_policy(key="secret"), halt).evaluate([_change("mart", "token")])
+    halt_verdict = _engine(_inferred_policy(key="secret"), halt).evaluate(
+        [_change("mart", "token")]
+    )
     assert halt_verdict.decision is GateDecision.ALLOW
 
 

@@ -6,7 +6,6 @@ two test lookups (``get_column_tests`` / ``get_tests_referencing``).
 """
 
 from dataclasses import dataclass, field
-from typing import Dict, List, Tuple
 
 from parrant.lineage.changeset import ChangeKind, ColumnChange
 from parrant.lineage.verdict import classify_provable_breaks, decide_verdict
@@ -15,31 +14,31 @@ from parrant.models.schema import BreakFinding, SemanticChangeKind, TestNode
 
 @dataclass
 class _Model:
-    columns: Dict[str, object]
+    columns: dict[str, object]
 
 
 @dataclass
 class _FakeRegistry:
     """Stand-in for ModelRegistry covering only the classifier's call surface."""
 
-    models: Dict[str, _Model] = field(default_factory=dict)
-    column_tests: Dict[Tuple[str, str], List[TestNode]] = field(default_factory=dict)
-    referenced_tests: Dict[Tuple[str, str], List[TestNode]] = field(default_factory=dict)
+    models: dict[str, _Model] = field(default_factory=dict)
+    column_tests: dict[tuple[str, str], list[TestNode]] = field(default_factory=dict)
+    referenced_tests: dict[tuple[str, str], list[TestNode]] = field(default_factory=dict)
     # Test unique_ids present in THIS manifest. On a head registry this is what lets the
     # classifier confirm a base test survived the change (see the rename-with-yml-update case).
     test_ids: set = field(default_factory=set)
-    model_tests: Dict[str, List[TestNode]] = field(default_factory=dict)
+    model_tests: dict[str, list[TestNode]] = field(default_factory=dict)
 
-    def get_models(self) -> Dict[str, _Model]:
+    def get_models(self) -> dict[str, _Model]:
         return self.models
 
-    def get_column_tests(self, model: str, column: str) -> List[TestNode]:
+    def get_column_tests(self, model: str, column: str) -> list[TestNode]:
         return list(self.column_tests.get((model.lower(), column.lower()), []))
 
-    def get_tests_referencing(self, model: str, column: str) -> List[TestNode]:
+    def get_tests_referencing(self, model: str, column: str) -> list[TestNode]:
         return list(self.referenced_tests.get((model.lower(), column.lower()), []))
 
-    def get_model_tests(self, model: str) -> List[TestNode]:
+    def get_model_tests(self, model: str) -> list[TestNode]:
         return list(self.model_tests.get(model.lower(), []))
 
     def get_test_unique_ids(self) -> set:
@@ -278,12 +277,12 @@ def test_verdict_omitting_changes_is_backward_compatible():
 
 # --- overrides: decide_verdict + applied/ineffective override records ----
 
-from parrant.models.schema import OverrideDirective, OverrideVerb  # noqa: E402
-from parrant.lineage.verdict import (  # noqa: E402
+from parrant.lineage.verdict import (
     applied_overrides,
     ineffective_overrides,
     unexcused_break_count,
 )
+from parrant.models.schema import OverrideDirective, OverrideVerb
 
 
 def _directive(verb, column=None, scope="column", reason="because"):

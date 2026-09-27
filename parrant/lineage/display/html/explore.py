@@ -1,12 +1,15 @@
-from typing import Dict, Tuple, Union, Set, List, Any, Optional, Mapping, TYPE_CHECKING
-from pydantic import BaseModel, Field
-from fastapi import FastAPI, Request
-from fastapi.templating import Jinja2Templates
-from fastapi.staticfiles import StaticFiles
-from fastapi.responses import HTMLResponse
-from pathlib import Path
-import uvicorn
 import logging
+from collections.abc import Mapping
+from pathlib import Path
+from typing import TYPE_CHECKING, Any
+
+import uvicorn
+from fastapi import FastAPI, Request
+from fastapi.responses import HTMLResponse
+from fastapi.staticfiles import StaticFiles
+from fastapi.templating import Jinja2Templates
+from pydantic import BaseModel, Field
+
 from parrant.models.schema import Column, ColumnLineage, TestNode
 
 if TYPE_CHECKING:
@@ -18,8 +21,8 @@ logger = logging.getLogger(__name__)
 class ColumnInfo(BaseModel):
     name: str
     model: str
-    type: Optional[str] = None
-    description: Optional[str] = None
+    type: str | None = None
+    description: str | None = None
 
 
 class GraphNode(BaseModel):
@@ -27,24 +30,24 @@ class GraphNode(BaseModel):
     label: str
     type: str
     model: str
-    data_type: Optional[str] = None
+    data_type: str | None = None
     is_main: bool = False
-    resource_type: Optional[str] = None
+    resource_type: str | None = None
     is_key: bool = False
     # For row-set (filter/join/QUALIFY) dependents: the predicate the upstream column appears
     # in — the "why" behind a node that consumes the column without projecting its value.
-    note: Optional[str] = None
+    note: str | None = None
     # dbt tests (not_null / unique / relationships / ...) declared on this column — the
     # guardrails a reviewer wants to see at a glance. Empty list = untested; None until enriched.
-    tests: Optional[List[Dict[str, Any]]] = None
+    tests: list[dict[str, Any]] | None = None
     # change-context marks (append-only; None in pure-explore mode → today's payload
     # byte-for-byte). ``semantic`` is the AST-diff class of a CHANGED column node
     # (equivalent|meaning_changed|indeterminate); ``breaking`` is the fail-safe convenience
     # (anything not proven equivalent, plus removed/type_changed); ``boundary`` tags a node
     # that sits past the dbt edge (e.g. "metabase") for the graph's BI band.
-    semantic: Optional[str] = None
-    breaking: Optional[bool] = None
-    boundary: Optional[str] = None
+    semantic: str | None = None
+    breaking: bool | None = None
+    boundary: str | None = None
 
 
 class GraphEdge(BaseModel):
@@ -52,15 +55,15 @@ class GraphEdge(BaseModel):
     target: str
     type: str = "lineage"
     # the single amber blast-path edge — set when the edge leaves a breaking column.
-    breaking: Optional[bool] = None
+    breaking: bool | None = None
 
 
 class GraphData(BaseModel):
-    nodes: List[Dict[str, Any]] = Field(default_factory=list)
-    edges: List[Dict[str, Any]] = Field(default_factory=list)
-    main_node: Optional[str] = None
-    column_info: Optional[ColumnInfo] = None
-    impact_summary: Optional[Dict[str, Any]] = None
+    nodes: list[dict[str, Any]] = Field(default_factory=list)
+    edges: list[dict[str, Any]] = Field(default_factory=list)
+    main_node: str | None = None
+    column_info: ColumnInfo | None = None
+    impact_summary: dict[str, Any] | None = None
 
 
 class LineageExplorer:
@@ -71,36 +74,36 @@ class LineageExplorer:
         self.host = host
         self.port = port
         self.data = GraphData()
-        self.lineage_service: Optional["LineageService"] = None
-        self._start_model: Optional[str] = None
-        self._start_column: Optional[str] = None
+        self.lineage_service: LineageService | None = None
+        self._start_model: str | None = None
+        self._start_column: str | None = None
 
         # change context (optional). Populated by ``set_change_context`` with the
         # already-computed changeset report (semantic per changed column, policy verdict,
         # cross-boundary Metabase reach, coverage honesty). All None here => pure-explore
         # mode, and every endpoint renders exactly today's payload.
-        self._change_report: Optional[Dict[str, Any]] = None
-        self._policy_verdict: Optional[Dict[str, Any]] = None
-        self._policy_decision: Optional[str] = None
-        self._metabase_coverage: Optional[Dict[str, Any]] = None
+        self._change_report: dict[str, Any] | None = None
+        self._policy_verdict: dict[str, Any] | None = None
+        self._policy_decision: str | None = None
+        self._metabase_coverage: dict[str, Any] | None = None
         # (model, column) -> {"semantic": str|None, "breaking": bool} for the CHANGED columns.
-        self._change_by_column: Dict[Tuple[str, str], Dict[str, Any]] = {}
+        self._change_by_column: dict[tuple[str, str], dict[str, Any]] = {}
         # name -> full metabase exposure entry (source/precision/via_cards/meta).
-        self._metabase_exposures: Dict[str, Dict[str, Any]] = {}
+        self._metabase_exposures: dict[str, dict[str, Any]] = {}
         # (model, column) -> the metabase dashboards THIS change reaches, each as
         # {name, via_columns, precision} so per-change reach stays column-precise (F4).
-        self._metabase_reach_by_change: Dict[Tuple[str, str], List[Dict[str, Any]]] = {}
+        self._metabase_reach_by_change: dict[tuple[str, str], list[dict[str, Any]]] = {}
         # A MetabaseReach index for STATIC cross-boundary exploration (no changeset needed):
         # "what Metabase cards/dashboards read this column?" is a lineage question, not an
         # impact question, so it should answer for any browsed column. Populated on demand
         # per explored column in pure-explore mode; the changeset path takes precedence.
-        self._metabase_static_reach: Optional[Any] = None
-        self._metabase_dashboard_names: Dict[int, str] = {}
+        self._metabase_static_reach: Any | None = None
+        self._metabase_dashboard_names: dict[int, str] = {}
 
         self._setup_templates_and_routes()
 
     @staticmethod
-    def _is_breaking(kind: Optional[str], semantic: Optional[str]) -> bool:
+    def _is_breaking(kind: str | None, semantic: str | None) -> bool:
         """Fail-safe breaking flag for a changed column.
 
         Everything is breaking except a purely additive column or a proven-equivalent
@@ -112,7 +115,7 @@ class LineageExplorer:
             return False
         return semantic != "equivalent"
 
-    def set_change_context(self, report: Optional[Dict[str, Any]]) -> None:
+    def set_change_context(self, report: dict[str, Any] | None) -> None:
         """Attach an already-computed changeset report so the explorer can surface the
         product signals (semantic categorization, policy verdict, Metabase reach, coverage).
 
@@ -173,15 +176,15 @@ class LineageExplorer:
             if reached:
                 self._metabase_reach_by_change[key] = reached
 
-    def _change_mark(self, model: Any, column: Any) -> Optional[Dict[str, Any]]:
+    def _change_mark(self, model: Any, column: Any) -> dict[str, Any] | None:
         """The semantic/breaking mark for ``model.column`` if it is a changed column."""
         if not isinstance(model, str) or not isinstance(column, str):
             return None
         return self._change_by_column.get((model, column))
 
     def _enrich_impact_with_change_context(
-        self, impact_data: Dict[str, Any], model: str, column: str
-    ) -> Dict[str, Any]:
+        self, impact_data: dict[str, Any], model: str, column: str
+    ) -> dict[str, Any]:
         """Fold the change-context signals onto a single-column impact payload.
 
         Additive and guarded: with no change context (pure-explore mode) or a non-dict
@@ -264,11 +267,11 @@ class LineageExplorer:
             )
 
         @self.app.get("/api/graph")
-        async def get_graph_data() -> Dict[str, Any]:
+        async def get_graph_data() -> dict[str, Any]:
             return self.data.model_dump()
 
         @self.app.get("/api/coverage")
-        async def get_coverage() -> Dict[str, Any]:
+        async def get_coverage() -> dict[str, Any]:
             if not self.lineage_service:
                 return {"error": "Lineage service not initialized"}
             coverage = self.lineage_service.get_coverage().model_dump()
@@ -280,7 +283,7 @@ class LineageExplorer:
             return coverage
 
         @self.app.get("/api/policy-verdict")
-        async def get_policy_verdict() -> Dict[str, Any]:
+        async def get_policy_verdict() -> dict[str, Any]:
             # Change-wide decision (block/warn/allow), independent of the selected column.
             # ``{"decision": None}`` when no policy resolved / no changeset — the frontend
             # treats that as "feature not active" and renders nothing new.
@@ -289,16 +292,16 @@ class LineageExplorer:
             return {"decision": None}
 
         @self.app.get("/api/models")
-        async def get_models() -> List[Dict[str, Any]]:
+        async def get_models() -> list[dict[str, Any]]:
             if not self.lineage_service:
                 return []
 
-            model_tree_root: List[Dict[str, Any]] = []
+            model_tree_root: list[dict[str, Any]] = []
             all_models = self.lineage_service.registry.get_models()
             all_exposures = self.lineage_service.registry.get_exposures()
 
             def insert_into_tree(
-                tree: List[Dict[str, Any]], path_parts: List[str], model_data: Dict[str, Any]
+                tree: list[dict[str, Any]], path_parts: list[str], model_data: dict[str, Any]
             ) -> None:
                 current_level = tree
                 for i, part in enumerate(path_parts):
@@ -405,7 +408,7 @@ class LineageExplorer:
             return model_tree_root
 
         @self.app.get("/api/lineage/{model}/{column}")
-        async def get_lineage(model: str, column: str) -> Dict[str, Any]:
+        async def get_lineage(model: str, column: str) -> dict[str, Any]:
             if not self.lineage_service:
                 return {"error": "Lineage service not initialized"}
 
@@ -457,7 +460,7 @@ class LineageExplorer:
                 return {"error": str(e)}
 
         @self.app.get("/api/model/{model_name}/details")
-        async def get_model_details(model_name: str) -> Dict[str, Any]:
+        async def get_model_details(model_name: str) -> dict[str, Any]:
             if not self.lineage_service:
                 return {"error": "Lineage service not initialized"}
 
@@ -475,7 +478,7 @@ class LineageExplorer:
                 return {"error": str(e)}
 
         @self.app.get("/api/impact-analysis/{model}/{column}")
-        async def get_impact_analysis(model: str, column: str) -> Dict[str, Any]:
+        async def get_impact_analysis(model: str, column: str) -> dict[str, Any]:
             if not self.lineage_service:
                 return {"error": "Lineage service not initialized"}
 
@@ -484,7 +487,7 @@ class LineageExplorer:
                 try:
                     model_obj = self.lineage_service.registry.get_model(model)
                 except (ValueError, KeyError) as e:
-                    return {"error": f"Model '{model}' not found: {str(e)}"}
+                    return {"error": f"Model '{model}' not found: {e!s}"}
 
                 # Verify column exists
                 if column not in model_obj.columns:
@@ -551,7 +554,7 @@ class LineageExplorer:
         """
         if not self._change_by_column:
             return
-        breaking_ids: Set[str] = set()
+        breaking_ids: set[str] = set()
         for node in self.data.nodes:
             if node.get("type") != "column":
                 continue
@@ -568,9 +571,9 @@ class LineageExplorer:
                 edge["breaking"] = True
 
     @staticmethod
-    def _boundary_exposure_data(entry: Dict[str, Any]) -> Dict[str, Any]:
+    def _boundary_exposure_data(entry: dict[str, Any]) -> dict[str, Any]:
         """The graph ``exposure_data`` payload for a reached Metabase dashboard node."""
-        exposure_data: Dict[str, Any] = {
+        exposure_data: dict[str, Any] = {
             "boundary": "metabase",
             "type": entry.get("type") or "dashboard",
         }
@@ -590,7 +593,7 @@ class LineageExplorer:
         return exposure_data
 
     def attach_metabase_static(
-        self, reach: Any, dashboard_names: Optional[Dict[int, str]] = None
+        self, reach: Any, dashboard_names: dict[int, str] | None = None
     ) -> None:
         """Attach a :class:`MetabaseReach` for STATIC cross-boundary exploration.
 
@@ -615,7 +618,7 @@ class LineageExplorer:
             )
         except Exception:  # reach is best-effort; never break the graph over it
             return
-        reach_list: List[Dict[str, Any]] = []
+        reach_list: list[dict[str, Any]] = []
         for entry in entries:
             name = entry.get("name")
             if not isinstance(name, str):
@@ -659,7 +662,7 @@ class LineageExplorer:
             return
 
         # Pass 1 — tag exposure nodes the registry already emitted that are dashboards.
-        present_exposure_names: Set[str] = set()
+        present_exposure_names: set[str] = set()
         for node in self.data.nodes:
             if node.get("type") != "exposure":
                 continue
@@ -740,12 +743,12 @@ class LineageExplorer:
                     GraphEdge(source=anchor_id, target=node_id, type="exposure").model_dump()
                 )
 
-    def _downstream_mart_leaf_ids(self) -> List[str]:
+    def _downstream_mart_leaf_ids(self) -> list[str]:
         """The terminal downstream dbt-model columns — targets of a lineage edge that are not
         themselves a source of one — where the blast path exits into the BI layer. Snapshots
         and sources are excluded so a dashboard fans out of the marts, not a raw table."""
-        lineage_sources: Set[str] = set()
-        lineage_targets: Set[str] = set()
+        lineage_sources: set[str] = set()
+        lineage_targets: set[str] = set()
         for edge in self.data.edges:
             if edge.get("type", "lineage") != "lineage":
                 continue
@@ -756,7 +759,7 @@ class LineageExplorer:
             if target is not None:
                 lineage_targets.add(target)
         by_id = {n.get("id"): n for n in self.data.nodes}
-        leaves: List[str] = []
+        leaves: list[str] = []
         for node_id in lineage_targets:
             if node_id in lineage_sources:
                 continue
@@ -769,7 +772,7 @@ class LineageExplorer:
         return sorted(leaves)
 
     @staticmethod
-    def _serialize_test(test: TestNode) -> Dict[str, Any]:
+    def _serialize_test(test: TestNode) -> dict[str, Any]:
         """Flatten a :class:`TestNode` into the compact dict the frontend renders."""
         return {
             "test_name": test.test_name,
@@ -779,9 +782,7 @@ class LineageExplorer:
             "referenced_column": test.referenced_column,
         }
 
-    def _column_tests_payload(
-        self, model: Optional[str], column: Optional[str]
-    ) -> List[Dict[str, Any]]:
+    def _column_tests_payload(self, model: str | None, column: str | None) -> list[dict[str, Any]]:
         """The dbt tests declared on ``model.column`` (empty when untested/unknown).
 
         Reuses the registry's prebuilt reverse index — never re-parses artifacts.
@@ -795,7 +796,7 @@ class LineageExplorer:
             return []
         return [self._serialize_test(t) for t in tests]
 
-    def _enrich_impact_with_tests(self, impact_data: Dict[str, Any]) -> Dict[str, Any]:
+    def _enrich_impact_with_tests(self, impact_data: dict[str, Any]) -> dict[str, Any]:
         """Attach the tests covering each affected column to an impact payload.
 
         Lets the impact panel show which guarantees a change threatens. Mutates and returns
@@ -871,7 +872,7 @@ class LineageExplorer:
                 )
 
     def _enrich_nodes_with_metadata(
-        self, refs_list: List[Dict[str, Union[Dict[str, ColumnLineage], Set[str]]]]
+        self, refs_list: list[dict[str, dict[str, ColumnLineage] | set[str]]]
     ) -> None:
         """Enrich nodes with metadata like data types and resource types."""
         if not self.lineage_service:
@@ -917,13 +918,13 @@ class LineageExplorer:
 
     def _queue_additional_nodes(
         self,
-        upstream_refs: Dict[str, Union[Dict[str, ColumnLineage], Set[str]]],
-        downstream_refs: Dict[str, Union[Dict[str, ColumnLineage], Set[str]]],
-        processed: Set[tuple[str, str]],
-        to_process: List[tuple[str, str]],
+        upstream_refs: dict[str, dict[str, ColumnLineage] | set[str]],
+        downstream_refs: dict[str, dict[str, ColumnLineage] | set[str]],
+        processed: set[tuple[str, str]],
+        to_process: list[tuple[str, str]],
     ) -> None:
         """Queue additional nodes for processing in sorted order for deterministic BFS."""
-        new_nodes: List[tuple[str, str]] = []
+        new_nodes: list[tuple[str, str]] = []
         for refs in [upstream_refs, downstream_refs]:
             for model_name, columns in sorted(refs.items()):
                 if model_name == "exposures" or not isinstance(columns, dict):
@@ -941,9 +942,9 @@ class LineageExplorer:
 
     def _add_processed_data(
         self,
-        refs: Dict[str, Union[Dict[str, ColumnLineage], Set[str]]],
+        refs: dict[str, dict[str, ColumnLineage] | set[str]],
         direction: str,
-        main_node_id: Optional[str] = None,
+        main_node_id: str | None = None,
     ) -> None:
         """Process refs and add to graph."""
         processed = self._process_refs(refs, direction, main_node_id)
@@ -1089,7 +1090,7 @@ class LineageExplorer:
             resource_type=resource_type,
         )
 
-    def _get_model_resource_type(self, model_name: str) -> Optional[str]:
+    def _get_model_resource_type(self, model_name: str) -> str | None:
         """Get resource type for a model."""
         try:
             if self.lineage_service:
@@ -1109,11 +1110,11 @@ class LineageExplorer:
         id: str,
         label: str,
         model: str,
-        data_type: Optional[str] = None,
+        data_type: str | None = None,
         is_main: bool = False,
-        resource_type: Optional[str] = None,
+        resource_type: str | None = None,
         is_key: bool = False,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Helper to create and add a node."""
         node = GraphNode(
             id=id,
@@ -1129,7 +1130,7 @@ class LineageExplorer:
         self.data.nodes.append(node)
         return node
 
-    def _add_edge(self, source_id: str, target_id: str) -> Dict[str, str]:
+    def _add_edge(self, source_id: str, target_id: str) -> dict[str, str]:
         """Helper to create and add an edge."""
         edge = GraphEdge(source=source_id, target=target_id, type="lineage").model_dump()
 
@@ -1138,13 +1139,13 @@ class LineageExplorer:
 
     def _process_refs(
         self,
-        refs: Mapping[str, Union[Dict[str, ColumnLineage], Set[str]]],
+        refs: Mapping[str, dict[str, ColumnLineage] | set[str]],
         direction: str,
-        main_node_id: Optional[str] = None,
-    ) -> Dict[str, List[Dict[str, Any]]]:
+        main_node_id: str | None = None,
+    ) -> dict[str, list[dict[str, Any]]]:
         """Process reference data into nodes and edges."""
-        nodes: List[Dict[str, Any]] = []
-        edges: List[Dict[str, Any]] = []
+        nodes: list[dict[str, Any]] = []
+        edges: list[dict[str, Any]] = []
         node_ids = set()
 
         if "exposures" in refs and isinstance(refs["exposures"], set):
@@ -1234,7 +1235,7 @@ class LineageExplorer:
 
         return {"nodes": nodes, "edges": edges}
 
-    def _split_qualified_name(self, qualified_name: str) -> Optional[tuple[str, str]]:
+    def _split_qualified_name(self, qualified_name: str) -> tuple[str, str] | None:
         """Split a fully qualified name into model and column parts. Returns None if invalid."""
         if "." not in qualified_name:
             return None
@@ -1247,9 +1248,9 @@ class LineageExplorer:
 
     def _add_downstream_edges(
         self,
-        source_columns: Union[List[str], Set[str]],
+        source_columns: list[str] | set[str],
         target_node_id: str,
-        edges: List[Dict[str, Any]],
+        edges: list[dict[str, Any]],
     ) -> None:
         """Add edges for downstream lineage."""
         for source in source_columns:
@@ -1263,12 +1264,12 @@ class LineageExplorer:
 
     def _process_source_columns(
         self,
-        source_columns: Union[List[str], Set[str]],
+        source_columns: list[str] | set[str],
         target_node_id: str,
-        refs: Mapping[str, Union[Dict[str, ColumnLineage], Set[str]]],
-        nodes: List[Dict[str, Any]],
-        edges: List[Dict[str, Any]],
-        node_ids: Set[str],
+        refs: Mapping[str, dict[str, ColumnLineage] | set[str]],
+        nodes: list[dict[str, Any]],
+        edges: list[dict[str, Any]],
+        node_ids: set[str],
     ) -> None:
         """Process source columns and create nodes/edges."""
         for source in source_columns:
@@ -1288,9 +1289,9 @@ class LineageExplorer:
         self,
         src_model: str,
         src_col: str,
-        refs: Mapping[str, Union[Dict[str, ColumnLineage], Set[str]]],
-        nodes: List[Dict[str, Any]],
-        node_ids: Set[str],
+        refs: Mapping[str, dict[str, ColumnLineage] | set[str]],
+        nodes: list[dict[str, Any]],
+        node_ids: set[str],
     ) -> None:
         """Add a source node to the graph."""
         src_node_id = f"col_{src_model}_{src_col}"
