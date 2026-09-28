@@ -209,6 +209,24 @@ def test_unresolved_change_still_rebuilds_its_own_model() -> None:
     _assert_partition(selection, changed | reachable)
 
 
+def test_unresolved_change_widens_the_selection() -> None:
+    # A change parrant could not analyze (impact resolution raised) has an UNKNOWN reach: its
+    # downstream cone is invisible to the fold, so nothing in the reachable universe may be
+    # proven safe to skip. The selection must widen, exactly like non-full confidence.
+    changed = {"orphan"}
+    reachable = {"downstream_a", "downstream_b"}
+    by_change = [
+        _change(kind="removed", semantic=None, resolved=False),
+        _change(kind="added", semantic=None, reached=["downstream_a"]),
+    ]
+    selection = build_selection(reachable, changed, by_change, _confidence())
+
+    assert selection["widened_to_all_reachable"] is True
+    assert selection["skippable_models"] == []
+    assert set(selection["rebuild_models"]) == changed | reachable
+    _assert_partition(selection, changed | reachable)
+
+
 def test_selection_is_wired_into_get_changeset_impact() -> None:
     # End-to-end through the service: a real logic change on mart.id surfaces a selection block
     # with the edited model in the rebuild set.

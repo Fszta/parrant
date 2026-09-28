@@ -191,10 +191,11 @@ def build_selection(
         could not fully resolve (``partial_edges`` — columns present but a phantom/unresolvable
         source edge), OR deliberately does not column-analyze (``opaque`` — unparseable SQL such
         as a semantic view) — the COMPLETE machine lists — is rebuilt;
-      - if confidence is not ``full`` OR any display list was truncated, ``skippable_models`` is
-        empty and ``rebuild_models`` widens to the whole reachable universe. A reachable
-        marker-carrying model drives ``confidence.level`` to ``partial``, so it triggers this
-        widen automatically — the safe over-build.
+      - if confidence is not ``full``, any display list was truncated, OR any change is
+        UNRESOLVED (its impact fan-out raised, so its downstream reach is unknown),
+        ``skippable_models`` is empty and ``rebuild_models`` widens to the whole reachable
+        universe. A reachable marker-carrying model drives ``confidence.level`` to ``partial``,
+        so it triggers this widen automatically — the safe over-build.
 
     ``skippable_models`` is the reachable complement and is non-empty only at full confidence
     with nothing truncated. All emitted lists are sorted for determinism.
@@ -235,8 +236,14 @@ def build_selection(
         (set(changed_models) & universe) | (breaking_reached & universe) | (unanalyzable & universe)
     )
 
+    # A change parrant could not resolve (impact fan-out raised) carries an UNKNOWN reach: its
+    # downstream cone contributed nothing to ``breaking_reached``, so leaving the fold as-is
+    # would park that cone in ``skippable_models`` — an unprovable state classifying models
+    # safe. Any unresolved change therefore forces the widen (fail-closed).
+    has_unresolved = any(entry.get("resolved", True) is False for entry in by_change)
+
     level = confidence["level"]
-    widened = level != "full" or truncated
+    widened = level != "full" or truncated or has_unresolved
     if widened:
         rebuild = set(universe)
         skippable: List[str] = []
