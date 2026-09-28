@@ -1,6 +1,7 @@
-from typing import Dict, Set, Union
 import click
+
 from parrant.models.schema import Column, ColumnLineage, Coverage
+
 from .base import LineageStaticDisplay, format_coverage_line
 
 
@@ -11,7 +12,7 @@ class TextDisplay(LineageStaticDisplay):
         if column.description:
             click.echo(f"Description: {column.description}")
 
-    def display_upstream(self, refs: Dict[str, Union[Dict[str, ColumnLineage], Set[str]]]) -> None:
+    def display_upstream(self, refs: dict[str, dict[str, ColumnLineage] | set[str]]) -> None:
         if not refs:
             return
 
@@ -30,12 +31,10 @@ class TextDisplay(LineageStaticDisplay):
         for model_name, columns in refs.items():
             if model_name not in ("sources", "direct_refs") and isinstance(columns, dict):
                 click.echo(f"  Model {model_name}:")
-                for col_name, lineage in columns.items():
+                for col_name in columns:
                     click.echo(f"    {col_name}")
 
-    def display_downstream(
-        self, refs: Dict[str, Union[Dict[str, ColumnLineage], Set[str]]]
-    ) -> None:
+    def display_downstream(self, refs: dict[str, dict[str, ColumnLineage] | set[str]]) -> None:
         if not refs:
             return
 
@@ -61,7 +60,7 @@ class TextDisplay(LineageStaticDisplay):
                 columns, dict
             ):
                 click.echo(f"  Model {model_name}:")
-                for col_name, lineage in columns.items():
+                for col_name in columns:
                     click.echo(f"    {col_name}")
 
     def display_coverage(self, coverage: Coverage) -> None:
@@ -70,4 +69,3 @@ class TextDisplay(LineageStaticDisplay):
 
     def save(self) -> None:
         """No-op for text display as output is immediate."""
-        pass

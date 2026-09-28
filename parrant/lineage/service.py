@@ -1,9 +1,9 @@
-from pathlib import Path
-from typing import Dict, List, Literal, Set, Optional, Any, Tuple, Union, TYPE_CHECKING
-from dataclasses import dataclass, field
-from collections import Counter
 import logging
 import re
+from collections import Counter
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import TYPE_CHECKING, Any, Literal, Optional
 
 from parrant.artifacts.exceptions import ModelNotFoundError
 from parrant.lineage.provider import LineageAndMetadataProvider
@@ -27,13 +27,13 @@ logger = logging.getLogger(__name__)
 
 # Higher rank == more severe. Used to keep the worst severity when the same
 # downstream node is reached by several changed columns.
-_SEVERITY_RANK: Dict[str, int] = {"critical": 2, "low_impact": 1}
+_SEVERITY_RANK: dict[str, int] = {"critical": 2, "low_impact": 1}
 
 # A downstream column's ``transformation_type`` → the plain-language *mechanism* by which
 # the change reaches it. This is the machine-readable twin of the markdown's mechanism
 # split (derived recompute / row-set filter / pass-through): it lets an agent or the
 # Impact Report envelope reason over *how* impact propagates, not just how many nodes.
-_MECHANISM_LABELS: Dict[str, str] = {
+_MECHANISM_LABELS: dict[str, str] = {
     "derived": "derived_recompute",
     "filter": "rowset_filter",
     "renamed": "renamed_passthrough",
@@ -41,7 +41,7 @@ _MECHANISM_LABELS: Dict[str, str] = {
 }
 
 
-def _mechanism_label(transformation_type: Optional[str]) -> str:
+def _mechanism_label(transformation_type: str | None) -> str:
     """Map a downstream column's ``transformation_type`` to its reach *mechanism* label.
 
     The single source of the recompute/filter/pass-through taxonomy predicates match on.
@@ -53,8 +53,8 @@ def _mechanism_label(transformation_type: Optional[str]) -> str:
 
 
 def _reached_from_impact(
-    impact: Dict[str, Any],
-) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]], List[Dict[str, Any]]]:
+    impact: dict[str, Any],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
     """Re-shape a single change's impact into reached NAMES + mechanism (no new traversal).
 
     ``get_column_impact`` already computes the reached models/columns/exposures; it only
@@ -70,7 +70,7 @@ def _reached_from_impact(
 
     Pure re-shape of data already in ``impact``; deterministic ordering for stable reports.
     """
-    reached_columns: List[Dict[str, Any]] = [
+    reached_columns: list[dict[str, Any]] = [
         {
             "model": column["model"],
             "column": column["column"],
@@ -79,13 +79,13 @@ def _reached_from_impact(
         for column in impact.get("affected_columns", [])
     ]
 
-    model_mechanisms: Dict[str, Set[str]] = {}
+    model_mechanisms: dict[str, set[str]] = {}
     for column in impact.get("affected_columns", []):
         model_mechanisms.setdefault(column["model"], set()).add(
             _mechanism_label(column.get("transformation_type"))
         )
 
-    reached_models: List[Dict[str, Any]] = []
+    reached_models: list[dict[str, Any]] = []
     for model in impact.get("affected_models", []):
         mechanisms = sorted(model_mechanisms.get(model["name"], set()))
         if mechanisms:
@@ -95,21 +95,21 @@ def _reached_from_impact(
         else:
             reached_models.append({"name": model["name"], "mechanism": None})
 
-    reached_exposures: List[Dict[str, Any]] = [
+    reached_exposures: list[dict[str, Any]] = [
         {"name": exposure["name"]} for exposure in impact.get("affected_exposures", [])
     ]
 
     return reached_models, reached_exposures, reached_columns
 
 
-def _mechanism_breakdown(affected_columns: List[Dict[str, Any]]) -> Dict[str, int]:
+def _mechanism_breakdown(affected_columns: list[dict[str, Any]]) -> dict[str, int]:
     """Count affected downstream columns by the mechanism that propagates the change.
 
     Pure aggregation over the ``transformation_type`` each affected column already
     carries — no new traversal. An unrecognized type is bucketed under its raw value so
     nothing is silently dropped.
     """
-    breakdown: Dict[str, int] = {}
+    breakdown: dict[str, int] = {}
     for column in affected_columns:
         raw = column.get("transformation_type") or "unknown"
         label = _MECHANISM_LABELS.get(raw, raw)
@@ -117,7 +117,7 @@ def _mechanism_breakdown(affected_columns: List[Dict[str, Any]]) -> Dict[str, in
     return breakdown
 
 
-def _change_is_breaking(entry: Dict[str, Any]) -> bool:
+def _change_is_breaking(entry: dict[str, Any]) -> bool:
     """Whether a ``by_change`` entry contributes its reach to the rebuild set (fail-closed).
 
     Only a *proven* additive change is safe to skip: ``kind == "added"`` with a semantic that
@@ -134,7 +134,7 @@ def _change_is_breaking(entry: Dict[str, Any]) -> bool:
     return not proven_additive
 
 
-def _unresolved_edges(model: Any) -> List[Dict[str, Any]]:
+def _unresolved_edges(model: Any) -> list[dict[str, Any]]:
     """The model's unresolved-edge markers, or ``[]`` if none.
 
     Reads ``model.metadata["unresolved_edges"]`` — the complete, uncapped list the registry
@@ -164,19 +164,21 @@ def _partial_edges_reason(registry: LineageAndMetadataProvider, name: str) -> st
         model = registry.get_model(name)
     except ModelNotFoundError:
         return "unresolved_edge"
-    reasons = [edge.get("reason") for edge in _unresolved_edges(model) if edge.get("reason")]
+    reasons: list[str] = [
+        str(edge["reason"]) for edge in _unresolved_edges(model) if edge.get("reason")
+    ]
     if not reasons:
         return "unresolved_edge"
     counts = Counter(reasons)
-    return sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))[0][0]
+    return min(counts.items(), key=lambda kv: (-kv[1], kv[0]))[0]
 
 
 def build_selection(
-    reachable: Set[str],
-    changed_models: Set[str],
-    by_change: List[Dict[str, Any]],
-    confidence: Dict[str, Any],
-) -> Dict[str, Any]:
+    reachable: set[str],
+    changed_models: set[str],
+    by_change: list[dict[str, Any]],
+    confidence: dict[str, Any],
+) -> dict[str, Any]:
     """Derive the policy-free minimal rebuild set from an already-computed changeset impact.
 
     Pure function over the diff facts (reachability, the per-change reach in ``by_change``, and
@@ -201,7 +203,7 @@ def build_selection(
     """
     # The universe every model is partitioned over: the strictly-downstream reachable set plus
     # the edited models themselves (which the DAG walk excludes but which always rebuild).
-    universe: Set[str] = set(reachable) | set(changed_models)
+    universe: set[str] = set(reachable) | set(changed_models)
 
     # The COMPLETE unanalyzable lists (uncapped in machine output). A model parrant could not
     # analyze is assumed affected — this is the whole reason the lists must be complete. Models
@@ -209,7 +211,7 @@ def build_selection(
     # have columns but a phantom/unresolvable source edge, so they must ALWAYS rebuild regardless
     # of the widen branch below. This is a pure ADD (fail-safe) — a marker can only grow the
     # rebuild set, never shrink it or let a marker-carrying model land in ``skippable``.
-    unanalyzable: Set[str] = (
+    unanalyzable: set[str] = (
         set(confidence.get("no_column_info_models", []))
         | set(confidence.get("parse_failed_models", []))
         | set(confidence.get("partial_edges_models", []))
@@ -222,7 +224,7 @@ def build_selection(
         confidence.get("no_column_info_truncated") or confidence.get("parse_failed_truncated")
     )
 
-    breaking_reached: Set[str] = set()
+    breaking_reached: set[str] = set()
     for entry in by_change:
         if not _change_is_breaking(entry):
             continue
@@ -231,7 +233,7 @@ def build_selection(
             if name is not None:
                 breaking_reached.add(name)
 
-    rebuild: Set[str] = (
+    rebuild: set[str] = (
         (set(changed_models) & universe) | (breaking_reached & universe) | (unanalyzable & universe)
     )
 
@@ -239,7 +241,7 @@ def build_selection(
     widened = level != "full" or truncated
     if widened:
         rebuild = set(universe)
-        skippable: List[str] = []
+        skippable: list[str] = []
     else:
         skippable = sorted(universe - rebuild)
 
@@ -273,15 +275,15 @@ class _ReachPartition:
     ``parse_failed`` — partition ``reachable`` exactly.
     """
 
-    resolved: Set[str]
-    no_column_info: Set[str]
-    parse_failed: Set[str]
-    catalog_backed: Set[str]
-    parsed: Set[str]
-    partial_edges: Set[str] = field(default_factory=set)
+    resolved: set[str]
+    no_column_info: set[str]
+    parse_failed: set[str]
+    catalog_backed: set[str]
+    parsed: set[str]
+    partial_edges: set[str] = field(default_factory=set)
     # Nodes we deliberately do NOT column-analyze (unparseable SQL, e.g. semantic views):
     # model-level reach preserved, column edges withheld. Pulled out of the resolved set.
-    opaque: Set[str] = field(default_factory=set)
+    opaque: set[str] = field(default_factory=set)
 
 
 # A ``SELECT *`` immediately followed by a column-set modifier (Snowflake EXCLUDE/RENAME/
@@ -292,7 +294,7 @@ _STAR_MODIFIER_RE = re.compile(r"\*\s*(?:exclude|except|replace|rename)\b", re.I
 
 def _resolve_reason(
     registry: LineageAndMetadataProvider, name: str
-) -> Tuple[Literal["no_column_info", "unresolved"], Optional[str]]:
+) -> tuple[Literal["no_column_info", "unresolved"], str | None]:
     """(status, reason) for a reachable model that has no column info.
 
     Best-effort and advisory. A python model is surfaced as ``unresolved``/``python_model``;
@@ -340,8 +342,8 @@ def _opaque_reason(registry: LineageAndMetadataProvider, name: str) -> str:
 def build_resolution(
     registry: LineageAndMetadataProvider,
     partition: _ReachPartition,
-    rebuild_models: Set[str],
-) -> Tuple[Dict[str, Dict[str, Any]], Dict[str, Any]]:
+    rebuild_models: set[str],
+) -> tuple[dict[str, dict[str, Any]], dict[str, Any]]:
     """Retain the reachable partition per model as a resolution status + advisory reason.
 
     Pure emission over already-computed facts (the confidence partition, the catalog-backed
@@ -349,7 +351,7 @@ def build_resolution(
     Returns ``(per_model_map, resolution_summary_dict)``. Every reachable model appears exactly
     once in the map; the summary counts reconcile exactly with the confidence counts.
     """
-    per_model: Dict[str, Dict[str, Any]] = {}
+    per_model: dict[str, dict[str, Any]] = {}
     for name in partition.catalog_backed:
         per_model[name] = ModelResolution(status="catalog_backed", reason=None).model_dump()
     for name in partition.parsed:
@@ -405,7 +407,7 @@ def build_resolution(
 @dataclass
 class LineageSelector:
     model: str
-    column: Optional[str]
+    column: str | None
     upstream: bool
     downstream: bool
 
@@ -437,14 +439,14 @@ class LineageSelector:
 class LineageReferences:
     """Structured lineage references separating model mappings from special sets."""
 
-    models: Dict[str, Dict[str, ColumnLineage]] = field(default_factory=dict)
-    exposures: Set[str] = field(default_factory=set)
-    sources: Set[str] = field(default_factory=set)
-    direct_refs: Set[str] = field(default_factory=set)
+    models: dict[str, dict[str, ColumnLineage]] = field(default_factory=dict)
+    exposures: set[str] = field(default_factory=set)
+    sources: set[str] = field(default_factory=set)
+    direct_refs: set[str] = field(default_factory=set)
 
-    def to_dict(self) -> Dict[str, Union[Dict[str, ColumnLineage], Set[str]]]:
+    def to_dict(self) -> dict[str, dict[str, ColumnLineage] | set[str]]:
         """Convert to legacy dict format for backward compatibility."""
-        result: Dict[str, Union[Dict[str, ColumnLineage], Set[str]]] = {}
+        result: dict[str, dict[str, ColumnLineage] | set[str]] = {}
         result.update(self.models)
         if self.exposures:
             result["exposures"] = self.exposures
@@ -455,9 +457,7 @@ class LineageReferences:
         return result
 
     @classmethod
-    def from_dict(
-        cls, data: Dict[str, Union[Dict[str, ColumnLineage], Set[str]]]
-    ) -> "LineageReferences":
+    def from_dict(cls, data: dict[str, dict[str, ColumnLineage] | set[str]]) -> "LineageReferences":
         """Create from legacy dict format."""
         refs = cls()
         for key, value in data.items():
@@ -475,7 +475,7 @@ class LineageReferences:
 class LineageService:
     """Service for handling lineage operations."""
 
-    def __init__(self, catalog_path: Path, manifest_path: Path, adapter: Optional[str] = None):
+    def __init__(self, catalog_path: Path, manifest_path: Path, adapter: str | None = None):
         # Depend on the LineageProvider seam, not the concrete registry: the factory builds
         # and loads the SQLGlot-backed provider today, and is the single place a future
         # Fusion/warehouse backend would swap in.
@@ -488,11 +488,11 @@ class LineageService:
         """Return coverage for the loaded artifacts."""
         return self._coverage
 
-    def _dag_reachable_models(self, model_name: str) -> Set[str]:
+    def _dag_reachable_models(self, model_name: str) -> set[str]:
         """Transitive downstream models of model_name in the manifest DAG."""
         downstream_map = self.registry.get_manifest_downstream()
         start = model_name.lower()
-        reachable: Set[str] = set()
+        reachable: set[str] = set()
         queue = [start]
         while queue:
             current = queue.pop()
@@ -502,7 +502,7 @@ class LineageService:
                     queue.append(child)
         return reachable
 
-    def _partition_reachable(self, reachable: Set[str]) -> _ReachPartition:
+    def _partition_reachable(self, reachable: set[str]) -> _ReachPartition:
         """Split ``reachable`` by column-resolution outcome — the single source of truth.
 
         Both the confidence block and the per-model resolution status consume this, so the two
@@ -514,11 +514,11 @@ class LineageService:
         parse_failed_names = self.registry.get_parse_failed_models()
         opaque_names = self.registry.get_opaque_models()
 
-        resolved: Set[str] = set()
-        parse_failed: Set[str] = set()
-        no_column_info: Set[str] = set()
-        partial_edges: Set[str] = set()
-        opaque: Set[str] = set()
+        resolved: set[str] = set()
+        parse_failed: set[str] = set()
+        no_column_info: set[str] = set()
+        partial_edges: set[str] = set()
+        opaque: set[str] = set()
         for name in reachable:
             # Opaque takes priority over any columns a catalog entry might supply: we have no
             # column-level EDGES for these nodes (unparseable SQL), so they can never be treated
@@ -554,7 +554,7 @@ class LineageService:
             opaque=opaque,
         )
 
-    def _impact_confidence(self, reachable: Set[str], resolved_models: int) -> Dict[str, Any]:
+    def _impact_confidence(self, reachable: set[str], resolved_models: int) -> dict[str, Any]:
         """Confidence block: "full" when every reachable model was analyzable, else "partial".
 
         The honest signal is the *coverage gap* — reachable downstream models we could
@@ -586,9 +586,7 @@ class LineageService:
         # through it, so we widen the rebuild rather than prove anything downstream skippable. The
         # widen at ``build_selection`` fires on ``partial``.
         level: Literal["full", "partial"] = (
-            "full"
-            if not unanalyzable_reachable and not partial_edges and not opaque
-            else "partial"
+            "full" if not unanalyzable_reachable and not partial_edges and not opaque else "partial"
         )
         # Machine surface carries the COMPLETE name lists (no cap) so a fail-closed
         # consumer can never miss a model we couldn't analyze/resolve; the display layer caps.
@@ -610,7 +608,7 @@ class LineageService:
             level=level,
         ).model_dump()
 
-    def get_model_info(self, selector: LineageSelector) -> Dict[str, Any]:
+    def get_model_info(self, selector: LineageSelector) -> dict[str, Any]:
         """Get model information based on selector."""
         model = self.registry.get_model(selector.model)
         return {
@@ -622,7 +620,7 @@ class LineageService:
             "downstream": list(model.downstream) if selector.downstream else [],
         }
 
-    def get_column_info(self, selector: LineageSelector) -> Dict[str, Any]:
+    def get_column_info(self, selector: LineageSelector) -> dict[str, Any]:
         """Get column information and lineage based on selector."""
         model = self.registry.get_model(selector.model)
         if not selector.column or selector.column not in model.columns:
@@ -645,7 +643,7 @@ class LineageService:
             ),
         }
 
-    def _split_qualified_name(self, qualified_name: str) -> Optional[tuple[str, str]]:
+    def _split_qualified_name(self, qualified_name: str) -> tuple[str, str] | None:
         """Split a fully qualified name into model and column parts. Returns None if invalid."""
         if "." not in qualified_name:
             return None
@@ -668,7 +666,7 @@ class LineageService:
     def _merge_upstream_refs(
         self,
         target: LineageReferences,
-        source_dict: Dict[str, Union[Dict[str, ColumnLineage], Set[str]]],
+        source_dict: dict[str, dict[str, ColumnLineage] | set[str]],
     ) -> None:
         """Merge source refs dict into target LineageReferences."""
         for key, value in source_dict.items():
@@ -689,7 +687,7 @@ class LineageService:
         src_column: str,
         lineage: ColumnLineage,
         upstream_refs: LineageReferences,
-        visited: Set[str],
+        visited: set[str],
     ) -> None:
         """Process a model reference and add it to upstream_refs."""
         try:
@@ -711,8 +709,8 @@ class LineageService:
             self._process_source_reference(f"{src_model}.{src_column}", upstream_refs)
 
     def _get_upstream_lineage(
-        self, model_name: str, column_name: str, visited: Optional[Set[str]] = None
-    ) -> Dict[str, Union[Dict[str, ColumnLineage], Set[str]]]:
+        self, model_name: str, column_name: str, visited: set[str] | None = None
+    ) -> dict[str, dict[str, ColumnLineage] | set[str]]:
         """Recursively get all upstream column references."""
         if visited is None:
             visited = set()
@@ -738,7 +736,7 @@ class LineageService:
                 column.lineage,
                 key=lambda lineage: (
                     lineage.transformation_type,
-                    sorted(lineage.source_columns)[0] if lineage.source_columns else "",
+                    min(lineage.source_columns) if lineage.source_columns else "",
                 ),
             )
             for lineage in sorted_lineage:
@@ -757,13 +755,13 @@ class LineageService:
                         )
 
         except Exception as e:
-            logger.warning(f"Failed to process lineage for {current_ref}: {str(e)}")
+            logger.warning(f"Failed to process lineage for {current_ref}: {e!s}")
 
         return upstream_refs.to_dict()
 
     def _get_immediate_downstream_lineage(
         self, model_name: str, column_name: str
-    ) -> Dict[str, Union[Dict[str, ColumnLineage], Set[str]]]:
+    ) -> dict[str, dict[str, ColumnLineage] | set[str]]:
         """Get only immediate (non-recursive) downstream column references."""
         column_name = strip_sql_comments(column_name).lower()
         current_ref = f"{model_name}.{column_name}"
@@ -809,7 +807,7 @@ class LineageService:
                                 downstream_refs.models[other_name][col_name] = lineage
 
                 except Exception as e:
-                    logger.warning(f"Failed to process downstream model {other_name}: {str(e)}")
+                    logger.warning(f"Failed to process downstream model {other_name}: {e!s}")
 
             if column_used_downstream and downstream_models_using_column:
                 models_using_column = set(downstream_models_using_column)
@@ -829,14 +827,14 @@ class LineageService:
 
         except Exception as e:
             logger.warning(
-                f"Failed to process immediate downstream lineage for {current_ref}: {str(e)}"
+                f"Failed to process immediate downstream lineage for {current_ref}: {e!s}"
             )
 
         return downstream_refs.to_dict()
 
     def _get_downstream_lineage(
-        self, model_name: str, column_name: str, visited: Optional[Set[str]] = None
-    ) -> Dict[str, Union[Dict[str, ColumnLineage], Set[str]]]:
+        self, model_name: str, column_name: str, visited: set[str] | None = None
+    ) -> dict[str, dict[str, ColumnLineage] | set[str]]:
         """Get downstream column references following the model DAG, including exposures.
 
         Uses breadth-first traversal without shared mutable state to ensure determinism.
@@ -896,7 +894,7 @@ class LineageService:
                                     key=lambda lineage: (
                                         lineage.transformation_type,
                                         (
-                                            sorted(lineage.source_columns)[0]
+                                            min(lineage.source_columns)
                                             if lineage.source_columns
                                             else ""
                                         ),
@@ -923,19 +921,17 @@ class LineageService:
 
                         except Exception as e:
                             logger.warning(
-                                f"Failed to process downstream model {other_name}: {str(e)}"
+                                f"Failed to process downstream model {other_name}: {e!s}"
                             )
 
                     if column_used_downstream:
                         models_using_column.update(level_downstream_models)
                         all_models_using_column.update(level_downstream_models)
                         all_models_using_column.add(current_model)
-                        models_using_column = set(sorted(models_using_column))
+                        models_using_column = set(models_using_column)
 
                 except Exception as e:
-                    logger.warning(
-                        f"Failed to process downstream lineage for {current_ref}: {str(e)}"
-                    )
+                    logger.warning(f"Failed to process downstream lineage for {current_ref}: {e!s}")
 
             next_level_nodes.sort()
             queue.extend(next_level_nodes)
@@ -962,7 +958,7 @@ class LineageService:
 
         return downstream_refs.to_dict()
 
-    def get_column_impact(self, model_name: str, column_name: str) -> Dict[str, Any]:
+    def get_column_impact(self, model_name: str, column_name: str) -> dict[str, Any]:
         """Get impact analysis for a column - what would break if this column is modified.
 
         Returns:
@@ -1152,9 +1148,7 @@ class LineageService:
             raise
 
     @staticmethod
-    def _lookup_column_description(
-        registry: Any, model_name: str, column_name: str
-    ) -> Optional[str]:
+    def _lookup_column_description(registry: Any, model_name: str, column_name: str) -> str | None:
         """The dbt-authored description of a column, or None if it can't be resolved.
 
         Guarded so a stub service without a real registry simply yields no description
@@ -1172,11 +1166,11 @@ class LineageService:
 
     def get_changeset_impact(
         self,
-        changes: List["ColumnChange"],
+        changes: list["ColumnChange"],
         base_service: Optional["LineageService"] = None,
         *,
         metabase: Optional["MetabaseReach"] = None,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Aggregate single-column impact across a changeset into one blast radius.
 
         ``self`` is the *head* service. Each change is fanned through
@@ -1202,10 +1196,10 @@ class LineageService:
         # importing here keeps module load order simple and avoids any cycle.
         from parrant.lineage.changeset import ChangeKind
 
-        affected_models: Dict[str, Dict[str, Any]] = {}
-        affected_columns: Dict[Tuple[str, str], Dict[str, Any]] = {}
-        affected_exposures: Dict[str, Dict[str, Any]] = {}
-        by_change: List[Dict[str, Any]] = []
+        affected_models: dict[str, dict[str, Any]] = {}
+        affected_columns: dict[tuple[str, str], dict[str, Any]] = {}
+        affected_exposures: dict[str, dict[str, Any]] = {}
+        by_change: list[dict[str, Any]] = []
         unresolved = 0
 
         for change in changes:
@@ -1253,10 +1247,10 @@ class LineageService:
             # node of THIS change — the changed column itself plus every downstream column /
             # model the dbt reach already resolved. Appended, never re-walked.
             if metabase is not None:
-                columns_universe: Set[Tuple[str, str]] = {(change.model, change.column)}
+                columns_universe: set[tuple[str, str]] = {(change.model, change.column)}
                 for affected in impact["affected_columns"]:
                     columns_universe.add((affected["model"], affected["column"]))
-                models_universe: Set[str] = {change.model} | {
+                models_universe: set[str] = {change.model} | {
                     model["name"] for model in impact["affected_models"]
                 }
                 for entry in metabase.reached_dashboards(columns_universe, models_universe):
@@ -1316,12 +1310,12 @@ class LineageService:
         low_impact_count = len(deduped_columns) - critical_count - filter_count
 
         # Guarded so a stub service without a real registry omits confidence rather than erroring.
-        confidence: Optional[Dict[str, Any]] = None
-        selection: Optional[Dict[str, Any]] = None
-        resolution: Optional[Dict[str, Dict[str, Any]]] = None
-        resolution_summary: Optional[Dict[str, Any]] = None
+        confidence: dict[str, Any] | None = None
+        selection: dict[str, Any] | None = None
+        resolution: dict[str, dict[str, Any]] | None = None
+        resolution_summary: dict[str, Any] | None = None
         if getattr(self, "registry", None) is not None:
-            reachable: Set[str] = set()
+            reachable: set[str] = set()
             for change in changes:
                 reachable |= self._dag_reachable_models(change.model)
             confidence = self._impact_confidence(reachable, len(affected_models))

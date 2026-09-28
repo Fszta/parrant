@@ -4,7 +4,7 @@ import logging
 
 import pytest
 
-import parrant.artifacts.adapter_mapping as adapter_mapping
+from parrant.artifacts import adapter_mapping
 from parrant.artifacts.adapter_mapping import (
     ADAPTER_TO_DIALECT,
     normalize_adapter,

@@ -41,9 +41,11 @@ dbt-duckdb = ">=1.9.2,<2.0.0"
 dbt-core = ">=1.9.0,<2.0.0"
 duckdb = ">=1.2.1,<2.0.0"
 pytest = ">=8.3.4,<10.0.0"
-mypy = ">=1.15.0,<2.0.0"
-black = ">=24.10.0"
-ruff = ">=0.8.4"
+# Pinned exactly and mirrored by .pre-commit-config.yaml revs — one definition of
+# "clean" across local runs, hooks, and CI. Bump all four places together.
+mypy = "1.19.1"
+black = "25.12.0"
+ruff = "0.16.3"
 mkdocs-material = ">=9.5.0,<10.0.0"
 mkdocs-click = ">=0.8.1,<0.9.0"
 requests = ">=2.32.0,<3.0.0"
@@ -68,13 +70,33 @@ line-length = 100
 [tool.ruff]
 line-length = 100
 
+[tool.ruff.lint]
+# Ruff 0.16's broad default rule set, minus rules that flag patterns this codebase uses
+# deliberately. Do not silence a rule here to get a diff through — these are policy:
+#   BLE001/S110/S112 — broad/silent `except Exception` is the documented fail-safe
+#     contract (degrade honestly, never raise) across the registry/service/parser.
+#   PLW1510 — the scripts/ wrappers intentionally forward `subprocess.run` returncodes.
+#   PLW1508/G201/TRY002/RUF034/RUF059/EXE002 — style opinions not worth code churn.
+ignore = [
+    "BLE001",
+    "S110",
+    "S112",
+    "PLW1510",
+    "PLW1508",
+    "G201",
+    "TRY002",
+    "RUF034",
+    "RUF059",
+    "EXE002",
+]
+
 [build-system]
 requires = ["poetry-core>=2.0.0,<3.0.0"]
 build-backend = "poetry.core.masonry.api"
 
 [tool.mypy]
 python_version = "3.10"
-files = ["dbt_column_lineage", "tests"]
+files = ["parrant", "tests"]
 show_error_codes = true
 pretty = true
 explicit_package_bases = true

@@ -73,8 +73,7 @@ def test_registry_extracts_lineage_without_embedded_compiled_code(
     models_with_lineage = [
         name
         for name, model in models.items()
-        if model.language == "sql"
-        and any(col.lineage for col in model.columns.values())
+        if model.language == "sql" and any(col.lineage for col in model.columns.values())
     ]
     assert models_with_lineage, "no lineage extracted despite compiled files on disk"
 

@@ -37,7 +37,6 @@ from parrant.models.schema import (
     SemanticChangeKind,
 )
 
-
 # --- fakes ------------------------------------------------------------------
 
 
@@ -122,7 +121,9 @@ def test_grants_subset_of_allowlist_does_not_fire():
 
 def test_grants_outside_allowlist_fires():
     """grants {loader, reporter} ⊄ [loader, transformer] -> not_subset_of is TRUE -> block."""
-    registry = FakeRegistry(model_config={"customers": {"grants": {"select": ["loader", "reporter"]}}})
+    registry = FakeRegistry(
+        model_config={"customers": {"grants": {"select": ["loader", "reporter"]}}}
+    )
     policy = _config_policy("grants.select", "not_subset_of", ["loader", "transformer"])
     verdict = _engine(policy, registry).evaluate([_change()])
     assert verdict.blocks()
@@ -136,7 +137,9 @@ def test_missing_grants_is_empty_set_not_unknown():
     block even under the default fail_closed posture (the missing path is a PROVEN empty set,
     not an UNKNOWN that would route to on_missing_meta)."""
     registry = FakeRegistry(model_config={"customers": {"materialized": "table"}})  # no grants key
-    policy = _config_policy("grants.select", "not_subset_of", ["loader", "transformer"])  # blocking, fail_closed
+    policy = _config_policy(
+        "grants.select", "not_subset_of", ["loader", "transformer"]
+    )  # blocking, fail_closed
     verdict = _engine(policy, registry).evaluate([_change()])
     assert verdict.decision is GateDecision.ALLOW
     assert verdict.fired_rules == 0
@@ -144,7 +147,9 @@ def test_missing_grants_is_empty_set_not_unknown():
 
 
 def test_intersects_and_subset_of_sanity():
-    registry = FakeRegistry(model_config={"customers": {"grants": {"select": ["loader", "reporter"]}}})
+    registry = FakeRegistry(
+        model_config={"customers": {"grants": {"select": ["loader", "reporter"]}}}
+    )
     # intersects [reporter] -> shares reporter -> TRUE
     v_int = _engine(_config_policy("grants.select", "intersects", ["reporter"]), registry).evaluate(
         [_change()]
@@ -152,14 +157,15 @@ def test_intersects_and_subset_of_sanity():
     assert v_int.blocks()
     # subset_of [loader, transformer, reporter] -> {loader, reporter} ⊆ -> TRUE
     v_sub = _engine(
-        _config_policy("grants.select", "subset_of", ["loader", "transformer", "reporter"]), registry
+        _config_policy("grants.select", "subset_of", ["loader", "transformer", "reporter"]),
+        registry,
     ).evaluate([_change()])
     assert v_sub.blocks()
     # missing path + intersects -> [] shares nothing -> FALSE (empty set, no fire)
     empty = FakeRegistry(model_config={"customers": {}})
-    v_missing = _engine(_config_policy("grants.select", "intersects", ["reporter"]), empty).evaluate(
-        [_change()]
-    )
+    v_missing = _engine(
+        _config_policy("grants.select", "intersects", ["reporter"]), empty
+    ).evaluate([_change()])
     assert v_missing.decision is GateDecision.ALLOW
 
 
@@ -188,7 +194,9 @@ def test_scalar_missing_is_unknown_and_routes_to_on_missing_meta():
     Under fail_closed (default) a *blocking* rule fires on UNKNOWN; under skip it is dropped and
     counted in skipped_missing_meta. This proves the scalar side behaves like a missing meta key,
     NOT like the set-op empty set."""
-    registry = FakeRegistry(model_config={"customers": {"grants": {"select": ["loader"]}}})  # no materialized
+    registry = FakeRegistry(
+        model_config={"customers": {"grants": {"select": ["loader"]}}}
+    )  # no materialized
     # fail_closed (default) + blocking -> fires on UNKNOWN
     closed = _engine(_config_policy("materialized", "eq", "incremental"), registry).evaluate(
         [_change()]
@@ -213,9 +221,9 @@ def test_dotted_traversal_into_nested_config():
         model_config={"customers": {"grants": {"select": ["loader"], "insert": ["transformer"]}}}
     )
     # grants.insert is a distinct nested path
-    verdict = _engine(_config_policy("grants.insert", "intersects", ["transformer"]), registry).evaluate(
-        [_change()]
-    )
+    verdict = _engine(
+        _config_policy("grants.insert", "intersects", ["transformer"]), registry
+    ).evaluate([_change()])
     assert verdict.blocks()
 
 
@@ -283,9 +291,7 @@ def test_non_pii_over_granted_does_not_block():
         model_config={"customers": {"grants": {"select": ["analyst"]}}},
         column_meta={("customers", "created_at"): {"pii": False}},
     )
-    verdict = _engine(_pii_grants_policy(), registry).evaluate(
-        [_change(column="created_at")]
-    )
+    verdict = _engine(_pii_grants_policy(), registry).evaluate([_change(column="created_at")])
     assert verdict.decision is GateDecision.ALLOW
 
 
@@ -437,9 +443,9 @@ def test_superset_of_positive_and_missing():
     assert v_pos.blocks()
     # missing path -> [] ⊇ [loader] is FALSE -> no fire
     empty = FakeRegistry(model_config={"customers": {}})
-    v_missing = _engine(
-        _config_policy("grants.select", "superset_of", ["loader"]), empty
-    ).evaluate([_change()])
+    v_missing = _engine(_config_policy("grants.select", "superset_of", ["loader"]), empty).evaluate(
+        [_change()]
+    )
     assert v_missing.decision is GateDecision.ALLOW
 
 

@@ -24,7 +24,7 @@ import os
 import subprocess
 import sys
 from collections import defaultdict
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 from parrant.lineage.changeset import (
     ChangeKind,
@@ -73,7 +73,7 @@ def _changesets_fidelity_note() -> str:
     )
 
 
-def _changes_for_models(head: LineageService, models: List[str]) -> List[ColumnChange]:
+def _changes_for_models(head: LineageService, models: list[str]) -> list[ColumnChange]:
     """Expand a set of touched models into coarse ``logic_changed`` / ``INDETERMINATE`` changes.
 
     Mirrors :func:`build_git_changeset`'s inner loop but takes the already-computed model set, so
@@ -81,7 +81,7 @@ def _changes_for_models(head: LineageService, models: List[str]) -> List[ColumnC
     same diff) instead of shelling out twice.
     """
     head_models = head.registry.get_models()
-    chosen: Dict[Tuple[str, str], ColumnChange] = {}
+    chosen: dict[tuple[str, str], ColumnChange] = {}
     for model_name in models:
         model = head_models[model_name]
         for column in sorted(model.columns):
@@ -95,7 +95,7 @@ def _changes_for_models(head: LineageService, models: List[str]) -> List[ColumnC
     return sorted(chosen.values(), key=lambda c: (c.model, c.column))
 
 
-def _parent_ref(sha: str, repo_dir: Optional[str]) -> str:
+def _parent_ref(sha: str, repo_dir: str | None) -> str:
     """The first-parent ref to diff ``sha`` against, or the empty tree for a root commit.
 
     Squash-merge repos are linear (the spec's stated assumption), so first-parent ``^`` is the
@@ -117,12 +117,12 @@ def _parent_ref(sha: str, repo_dir: Optional[str]) -> str:
 def _replay_point(
     head_service: LineageService,
     policy: Policy,
-    changes: List[ColumnChange],
+    changes: list[ColumnChange],
     ref: str,
     source: str,
     unmapped: int,
-    parse_failures: List[str],
-) -> Tuple[BacktestPointResult, PolicyVerdict]:
+    parse_failures: list[str],
+) -> tuple[BacktestPointResult, PolicyVerdict]:
     """Run the existing impact + breaks + policy pipeline for one point.
 
     In git-diff / changesets mode there is no base registry, so ``classify_provable_breaks``
@@ -163,9 +163,9 @@ def _replay_point(
 
 
 def _aggregate_rule_stats(
-    points_verdicts: List[Tuple[BacktestPointResult, PolicyVerdict]],
+    points_verdicts: list[tuple[BacktestPointResult, PolicyVerdict]],
     policy: Policy,
-) -> List[BacktestRuleStat]:
+) -> list[BacktestRuleStat]:
     """Per-rule aggregate across the whole range.
 
     Rows: every ``policy.rules`` id (always present, so a rule that never fired reads as a
@@ -177,11 +177,11 @@ def _aggregate_rule_stats(
     policy_ids = [rule.id for rule in policy.rules]
     policy_id_set = set(policy_ids)
 
-    fired_total: Dict[str, int] = defaultdict(int)
-    fired_unknown: Dict[str, int] = defaultdict(int)
-    block_prs: Dict[str, int] = defaultdict(int)
-    warn_prs: Dict[str, int] = defaultdict(int)
-    extra_order: List[str] = []
+    fired_total: dict[str, int] = defaultdict(int)
+    fired_unknown: dict[str, int] = defaultdict(int)
+    block_prs: dict[str, int] = defaultdict(int)
+    warn_prs: dict[str, int] = defaultdict(int)
+    extra_order: list[str] = []
 
     for _point, verdict in points_verdicts:
         block_here: set[str] = set()
@@ -202,7 +202,7 @@ def _aggregate_rule_stats(
         for rid in warn_here:
             warn_prs[rid] += 1
 
-    stats: List[BacktestRuleStat] = []
+    stats: list[BacktestRuleStat] = []
     for rid in policy_ids + extra_order:
         total = fired_total.get(rid, 0)
         stats.append(
@@ -218,7 +218,7 @@ def _aggregate_rule_stats(
     return stats
 
 
-def _load_changesets_dir(path: str) -> List[Tuple[str, List[ColumnChange]]]:
+def _load_changesets_dir(path: str) -> list[tuple[str, list[ColumnChange]]]:
     """Read ``*.json`` from ``path`` and reconstruct each into ``(filename, changes)``.
 
     Accepts either a bare change-list, ``{"changes": [...]}``, or the full changeset report shape
@@ -226,7 +226,7 @@ def _load_changesets_dir(path: str) -> List[Tuple[str, List[ColumnChange]]]:
     """
     if not os.path.isdir(path):
         raise RuntimeError(f"--changesets path is not a directory: '{path}'")
-    out: List[Tuple[str, List[ColumnChange]]] = []
+    out: list[tuple[str, list[ColumnChange]]] = []
     for name in sorted(os.listdir(path)):
         if not name.endswith(".json"):
             continue
@@ -238,7 +238,7 @@ def _load_changesets_dir(path: str) -> List[Tuple[str, List[ColumnChange]]]:
     return out
 
 
-def _extract_change_entries(data: Any) -> List[Dict[str, Any]]:
+def _extract_change_entries(data: Any) -> list[dict[str, Any]]:
     if isinstance(data, list):
         return data
     if isinstance(data, dict):
@@ -254,7 +254,7 @@ def _extract_change_entries(data: Any) -> List[Dict[str, Any]]:
     )
 
 
-def _resolve_git_range(git_range: Optional[str], last: Optional[int]) -> Tuple[str, str]:
+def _resolve_git_range(git_range: str | None, last: int | None) -> tuple[str, str]:
     """Resolve ``(base, head)`` from ``--git-range base..head`` or ``--last N`` sugar."""
     if last is not None:
         if last < 1:
@@ -275,11 +275,11 @@ def run_backtest(
     head_service: LineageService,
     policy: Policy,
     *,
-    git_range: Optional[str] = None,
-    last: Optional[int] = None,
-    changesets_dir: Optional[str] = None,
-    repo_dir: Optional[str] = None,
-    baseline: Optional[BacktestReport] = None,
+    git_range: str | None = None,
+    last: int | None = None,
+    changesets_dir: str | None = None,
+    repo_dir: str | None = None,
+    baseline: BacktestReport | None = None,
     policy_source: str = "<policy>",
     progress: bool = True,
 ) -> BacktestReport:
@@ -311,21 +311,23 @@ def run_backtest(
 def _run_git(
     head_service: LineageService,
     policy: Policy,
-    git_range: Optional[str],
-    last: Optional[int],
-    repo_dir: Optional[str],
-    baseline: Optional[BacktestReport],
+    git_range: str | None,
+    last: int | None,
+    repo_dir: str | None,
+    baseline: BacktestReport | None,
     policy_source: str,
     progress: bool,
 ) -> BacktestReport:
     base, head = _resolve_git_range(git_range, last)
     commits = git_rev_list(base, head, repo_dir)
 
-    warnings: List[str] = [
-        "Merge/non-squash repos: first-parent diffs may double-count changes across a "
-        "non-linear history (squash-merge repos are linear and unaffected)."
+    warnings: list[str] = [
+        (
+            "Merge/non-squash repos: first-parent diffs may double-count changes across a "
+            "non-linear history (squash-merge repos are linear and unaffected)."
+        )
     ]
-    points_verdicts: List[Tuple[BacktestPointResult, PolicyVerdict]] = []
+    points_verdicts: list[tuple[BacktestPointResult, PolicyVerdict]] = []
     skipped = 0
     total = len(commits)
     for i, sha in enumerate(commits, start=1):
@@ -375,13 +377,13 @@ def _run_changesets(
     head_service: LineageService,
     policy: Policy,
     changesets_dir: str,
-    baseline: Optional[BacktestReport],
+    baseline: BacktestReport | None,
     policy_source: str,
     progress: bool,
 ) -> BacktestReport:
     corpus = _load_changesets_dir(changesets_dir)
-    warnings: List[str] = []
-    points_verdicts: List[Tuple[BacktestPointResult, PolicyVerdict]] = []
+    warnings: list[str] = []
+    points_verdicts: list[tuple[BacktestPointResult, PolicyVerdict]] = []
     skipped = 0
     total = len(corpus)
     for i, (name, changes) in enumerate(corpus, start=1):
@@ -422,14 +424,14 @@ def _assemble_report(
     *,
     mode: str,
     policy_source: str,
-    base: Optional[str],
-    head: Optional[str],
-    points_verdicts: List[Tuple[BacktestPointResult, PolicyVerdict]],
+    base: str | None,
+    head: str | None,
+    points_verdicts: list[tuple[BacktestPointResult, PolicyVerdict]],
     policy: Policy,
     skipped: int,
-    warnings: List[str],
+    warnings: list[str],
     fidelity_note: str,
-    baseline: Optional[BacktestReport],
+    baseline: BacktestReport | None,
 ) -> BacktestReport:
     points = [p for p, _v in points_verdicts]
     rule_stats = _aggregate_rule_stats(points_verdicts, policy)
@@ -463,10 +465,10 @@ def _assemble_report(
     )
 
 
-def _baseline_delta(rule_stats: List[BacktestRuleStat], baseline: BacktestReport) -> Dict[str, Any]:
+def _baseline_delta(rule_stats: list[BacktestRuleStat], baseline: BacktestReport) -> dict[str, Any]:
     """Per-rule would-BLOCK delta vs a saved baseline (for the regression gate + report)."""
     base_block = {s.rule_id: s.would_block_prs for s in baseline.rule_stats}
-    per_rule: Dict[str, Dict[str, int]] = {}
+    per_rule: dict[str, dict[str, int]] = {}
     for stat in rule_stats:
         prev = base_block.get(stat.rule_id, 0)
         per_rule[stat.rule_id] = {
@@ -484,7 +486,7 @@ def _baseline_delta(rule_stats: List[BacktestRuleStat], baseline: BacktestReport
 def backtest_exit_code(
     report: BacktestReport,
     fail_on: str,
-    baseline: Optional[BacktestReport] = None,
+    baseline: BacktestReport | None = None,
 ) -> int:
     """Translate a report into a CI exit code.
 

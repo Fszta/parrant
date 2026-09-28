@@ -36,10 +36,9 @@ honestly labelled ("no column-level information", never "not built").
 import json
 
 from parrant.artifacts.registry import ModelRegistry
-from parrant.lineage.service import LineageService
 from parrant.lineage.changeset import ChangeKind, ChangesetBuilder
 from parrant.lineage.display.markdown import _confidence_reason_words
-
+from parrant.lineage.service import LineageService
 
 # --- fixture helpers -------------------------------------------------------
 

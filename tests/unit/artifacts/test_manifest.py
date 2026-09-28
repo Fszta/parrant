@@ -2,6 +2,7 @@ import json
 from pathlib import Path
 
 import pytest
+
 from parrant.artifacts.manifest import ManifestReader
 
 
@@ -268,7 +269,7 @@ def test_source_dependencies_without_identifier(tmp_path):
     with open(manifest_path, "w") as f:
         json.dump(manifest_data, f)
 
-    reader = ManifestReader(manifest_path)
+    reader = ManifestReader(str(manifest_path))
     reader.load()
 
     upstream = reader.get_model_upstream()
@@ -348,7 +349,7 @@ def test_manifest_normalizes_exposure_dependencies(tmp_path: Path) -> None:
     with open(manifest_path, "w") as f:
         json.dump(manifest_data, f)
 
-    reader = ManifestReader(manifest_path)
+    reader = ManifestReader(str(manifest_path))
     reader.load()
 
     exposure_deps = reader.get_exposure_dependencies()

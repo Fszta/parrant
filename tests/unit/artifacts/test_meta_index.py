@@ -221,7 +221,9 @@ def test_manifest_get_model_config_returns_node_config(tmp_path):
     assert config["grants"] == {"select": ["pii_reader", "analyst"]}
     assert config["tags"] == ["nightly", "finance"]
     # absent / unknown -> empty dict, never guessed
-    reader2 = _write_manifest(tmp_path, {"model.p.bare": {"name": "bare", "resource_type": "model"}})
+    reader2 = _write_manifest(
+        tmp_path, {"model.p.bare": {"name": "bare", "resource_type": "model"}}
+    )
     reader2.load()
     assert reader2.get_model_config("bare") == {}
     assert reader2.get_model_config("nope") == {}

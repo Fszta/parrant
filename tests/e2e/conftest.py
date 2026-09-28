@@ -1,13 +1,14 @@
 """Conftest for e2e tests - reuses integration conftest."""
 
-import pytest
-from pathlib import Path
-from typing import Dict, Any
 import sys
+from pathlib import Path
+from typing import Any
+
+import pytest
 
 
 @pytest.fixture(scope="session")
-def dbt_artifacts() -> Dict[str, Any]:
+def dbt_artifacts() -> dict[str, Any]:
     sys.path.insert(0, str(Path(__file__).parent.parent.parent))
     from tests.resources.dbt_test_project.setup import setup_dbt_project
 

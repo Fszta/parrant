@@ -16,9 +16,8 @@ plain garbage-SQL node. Everything else in the graph is ordinary, parseable SQL.
 import json
 
 from parrant.artifacts.registry import ModelRegistry
-from parrant.lineage.service import LineageService
 from parrant.lineage.changeset import ChangesetBuilder
-
+from parrant.lineage.service import LineageService
 
 # --- fixture helpers -------------------------------------------------------
 
@@ -77,9 +76,7 @@ def _catalog_nodes():
 
 def _manifest_nodes(orders_sql):
     return {
-        "model.p.dim_orders": _manifest_node(
-            "dim_orders", "select 1 as order_id, 1 as amount"
-        ),
+        "model.p.dim_orders": _manifest_node("dim_orders", "select 1 as order_id, 1 as amount"),
         "model.p.orders": _manifest_node("orders", orders_sql, depends_on=["dim_orders"]),
         "model.p.revenue_semantic_view": _manifest_node(
             "revenue_semantic_view",

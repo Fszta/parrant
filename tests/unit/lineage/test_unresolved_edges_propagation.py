@@ -16,14 +16,12 @@ The marker carries EMPTY ``source_columns`` on its column here on purpose: the p
 tokens, so empty sources must not be read as "clean" — the marker is the signal.
 """
 
-from typing import Optional, Set
-
 from parrant.lineage.service import build_resolution, build_selection
-from parrant.models.schema import Column, ColumnLineage, Model
+from parrant.models.schema import Column, ColumnLineage
 from tests.unit.test_lineage_provider import InMemoryProvider, _model, _service_on
 
 
-def _col(name: str, *, sources: Optional[Set[str]] = None) -> Column:
+def _col(name: str, *, sources: set[str] | None = None) -> Column:
     lineage = (
         [ColumnLineage(source_columns=sources, transformation_type="direct")]
         if sources is not None

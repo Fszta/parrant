@@ -16,7 +16,7 @@ import re
 import subprocess
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any
 
 from parrant.lineage.provider import LineageProvider
 from parrant.lineage.semantic_diff import (
@@ -53,7 +53,7 @@ class ChangeKind(str, Enum):
         return _KIND_PRIORITY[self]
 
 
-_KIND_PRIORITY: Dict[ChangeKind, int] = {
+_KIND_PRIORITY: dict[ChangeKind, int] = {
     ChangeKind.REMOVED: 5,
     ChangeKind.TYPE_CHANGED: 4,
     ChangeKind.LOGIC_CHANGED: 3,
@@ -75,21 +75,21 @@ class ColumnChange:
     model: str
     column: str
     kind: ChangeKind
-    detail: Optional[str] = None
-    semantic: Optional[SemanticChangeKind] = None
+    detail: str | None = None
+    semantic: SemanticChangeKind | None = None
     # Why a ``logic_changed`` column was flagged: the human-readable semantic reason plus the
     # two compared defining expressions. Populated only for logic changes (structural kinds
     # leave them ``None``), and surfaced by ``--explain`` / the JSON ``explain`` block.
-    reason: Optional[str] = None
-    base_expression: Optional[str] = None
-    head_expression: Optional[str] = None
+    reason: str | None = None
+    base_expression: str | None = None
+    head_expression: str | None = None
     # the override pragma acknowledging this change, when one resolved to it. Excluded from
     # equality/hashing (``compare=False``) so it never perturbs the sort key or dedup, and so a
     # frozen ``ColumnChange`` stays hashable even though ``OverrideDirective`` (pydantic) is not.
-    override: Optional[OverrideDirective] = field(default=None, compare=False)
+    override: OverrideDirective | None = field(default=None, compare=False)
 
-    def to_dict(self) -> Dict[str, object]:
-        payload: Dict[str, object] = {
+    def to_dict(self) -> dict[str, object]:
+        payload: dict[str, object] = {
             "model": self.model,
             "column": self.column,
             "kind": self.kind.value,
@@ -117,7 +117,7 @@ class ColumnChange:
         return payload
 
 
-def _normalize_sql(sql: Optional[str]) -> Optional[str]:
+def _normalize_sql(sql: str | None) -> str | None:
     """Normalize compiled SQL so cosmetic reformatting isn't read as a logic change.
 
     ``strip_sql_comments`` already removes comments and collapses whitespace runs,
@@ -129,7 +129,7 @@ def _normalize_sql(sql: Optional[str]) -> Optional[str]:
     return strip_sql_comments(sql)
 
 
-def _registry_dialect(registry: object) -> Optional[str]:
+def _registry_dialect(registry: object) -> str | None:
     """Best-effort SQL dialect from a registry, ``None`` when it exposes no getter.
 
     Defensive so a real ``ModelRegistry`` yields its dialect while lightweight test stubs
@@ -152,11 +152,11 @@ class OverrideResolution:
     stays ``List[ColumnChange]`` and existing callers are unaffected.
     """
 
-    stale: List[Dict[str, object]] = field(default_factory=list)
-    warnings: List[str] = field(default_factory=list)
+    stale: list[dict[str, object]] = field(default_factory=list)
+    warnings: list[str] = field(default_factory=list)
 
 
-def _stale_record(directive: OverrideDirective) -> Dict[str, object]:
+def _stale_record(directive: OverrideDirective) -> dict[str, object]:
     """The report skeleton for a stale (no matching change) override."""
     record = directive.to_record()
     return record
@@ -180,9 +180,9 @@ def _attach_override(change: ColumnChange, directive: OverrideDirective) -> Colu
 
 
 def resolve_overrides(
-    model_to_sql: Dict[str, Optional[str]],
-    changes: List[ColumnChange],
-) -> Tuple[List[ColumnChange], List[Dict[str, object]], List[str]]:
+    model_to_sql: dict[str, str | None],
+    changes: list[ColumnChange],
+) -> tuple[list[ColumnChange], list[dict[str, object]], list[str]]:
     """Attach override pragmas parsed from each model's head SQL to the matching changes.
 
     Shared by :class:`ChangesetBuilder` and :func:`build_git_changeset` so both entry points
@@ -194,12 +194,12 @@ def resolve_overrides(
     Names are lowercased to match the ``ColumnChange`` keys.
     """
     result = list(changes)
-    changes_by_model: Dict[str, List[int]] = {}
+    changes_by_model: dict[str, list[int]] = {}
     for idx, change in enumerate(result):
         changes_by_model.setdefault(change.model.lower(), []).append(idx)
 
-    stale: List[Dict[str, object]] = []
-    warnings: List[str] = []
+    stale: list[dict[str, object]] = []
+    warnings: list[str] = []
 
     for model_name, sql in model_to_sql.items():
         if not sql:
@@ -245,9 +245,9 @@ class _ColumnDiff:
     """
 
     kind: SemanticChangeKind
-    reason: Optional[str]
-    base_expression: Optional[str]
-    head_expression: Optional[str]
+    reason: str | None
+    base_expression: str | None
+    head_expression: str | None
 
 
 class ChangesetBuilder:
@@ -263,7 +263,7 @@ class ChangesetBuilder:
         self,
         base: LineageProvider,
         head: LineageProvider,
-        dialect: Optional[str] = None,
+        dialect: str | None = None,
         honor_overrides: bool = True,
     ):
         self.base = base
@@ -275,12 +275,12 @@ class ChangesetBuilder:
         # when True (default), parse override pragmas from head SQL and attach them.
         # ``--no-overrides`` sets this False to compute the raw gate (audit / the backtest).
         self.honor_overrides = honor_overrides
-        self.stale_overrides: List[Dict[str, object]] = []
-        self.override_warnings: List[str] = []
+        self.stale_overrides: list[dict[str, object]] = []
+        self.override_warnings: list[str] = []
 
-    def build(self) -> List[ColumnChange]:
+    def build(self) -> list[ColumnChange]:
         # (model, column) -> ColumnChange, keeping the highest-priority kind.
-        chosen: Dict[Tuple[str, str], ColumnChange] = {}
+        chosen: dict[tuple[str, str], ColumnChange] = {}
 
         def record(change: ColumnChange) -> None:
             key = (change.model, change.column)
@@ -379,13 +379,13 @@ class ChangesetBuilder:
             chosen_changes = self._apply_overrides(chosen_changes)
         return sorted(chosen_changes, key=lambda c: (c.model, c.column, c.kind.value))
 
-    def _apply_overrides(self, changes: List[ColumnChange]) -> List[ColumnChange]:
+    def _apply_overrides(self, changes: list[ColumnChange]) -> list[ColumnChange]:
         """Parse override pragmas from each changed model's head SQL and attach them.
 
         Compiled dbt SQL preserves ``--`` comments, so the head compiled SQL is the pragma
         source. Records stale directives / parse warnings on ``self`` for the report.
         """
-        model_to_sql: Dict[str, Optional[str]] = {
+        model_to_sql: dict[str, str | None] = {
             model_name: self._safe_compiled_sql(self.head, model_name)
             for model_name in {change.model for change in changes}
         }
@@ -426,7 +426,7 @@ class ChangesetBuilder:
             return False
         return base_sql != head_sql
 
-    def _logic_changed_columns(self, base_model, head_model) -> Dict[str, "_ColumnDiff"]:
+    def _logic_changed_columns(self, base_model, head_model) -> dict[str, _ColumnDiff]:
         """Which output columns changed derivation, each with a semantic classification.
 
         The model's compiled SQL differs, but usually only a few columns are responsible.
@@ -461,7 +461,7 @@ class ChangesetBuilder:
                 for column in head_model.columns
             }
 
-        changed: Dict[str, _ColumnDiff] = {}
+        changed: dict[str, _ColumnDiff] = {}
         for column in head_model.columns:
             base_sig = base_sigs.get(column)
             head_sig = head_sigs.get(column)
@@ -478,7 +478,7 @@ class ChangesetBuilder:
             )
         return changed
 
-    def _unattributed_logic_fallback(self, model_name: str, head_model) -> Dict[str, "_ColumnDiff"]:
+    def _unattributed_logic_fallback(self, model_name: str, head_model) -> dict[str, _ColumnDiff]:
         """Fail-safe for a proven compiled-SQL change that no output column can explain.
 
         ``_logic_changed`` proved the compiled SQL differs, but ``_logic_changed_columns``
@@ -514,7 +514,7 @@ class ChangesetBuilder:
             for column in head_model.columns
         }
 
-    def _classify_change(self, base_exprs: List[str], head_exprs: List[str]) -> "_ColumnDiff":
+    def _classify_change(self, base_exprs: list[str], head_exprs: list[str]) -> _ColumnDiff:
         """Classify a signature-differing column, keeping the reason and compared expressions.
 
         Fail-safe: if any involved defining expression is unparseable we cannot prove *how*
@@ -550,14 +550,14 @@ class ChangesetBuilder:
             head_expression=" | ".join(head_exprs) or None,
         )
 
-    def _any_unparseable(self, expressions: List[str]) -> bool:
+    def _any_unparseable(self, expressions: list[str]) -> bool:
         return any(
             canonical_key(expression, self._dialect).startswith(_UNPARSEABLE_PREFIX)
             for expression in expressions
         )
 
     @staticmethod
-    def _column_expressions(model, column_name: str) -> List[str]:
+    def _column_expressions(model, column_name: str) -> list[str]:
         """The raw defining expression string(s) of a column's lineage entries (or ``[]``)."""
         column = model.columns.get(column_name)
         if column is None:
@@ -565,7 +565,7 @@ class ChangesetBuilder:
         lineage = getattr(column, "lineage", None) or []
         return [getattr(entry, "sql_expression", None) or "" for entry in lineage]
 
-    def _column_signatures(self, model) -> Dict[str, Tuple]:
+    def _column_signatures(self, model) -> dict[str, tuple]:
         """Per-column derivation signature: {column -> sorted lineage fingerprint}.
 
         Columns with no parsed lineage are omitted (no signature), so the caller can tell
@@ -573,7 +573,7 @@ class ChangesetBuilder:
         dialect-aware AST canonical key (``canonical_key``), so cosmetic-only differences
         collapse to the same signature.
         """
-        signatures: Dict[str, Tuple] = {}
+        signatures: dict[str, tuple] = {}
         for column_name, column in model.columns.items():
             lineage = getattr(column, "lineage", None) or []
             if not lineage:
@@ -587,7 +587,7 @@ class ChangesetBuilder:
         return signatures
 
     @staticmethod
-    def _safe_compiled_sql(registry: LineageProvider, model_name: str) -> Optional[str]:
+    def _safe_compiled_sql(registry: LineageProvider, model_name: str) -> str | None:
         try:
             return registry.get_compiled_sql(model_name)
         except Exception:
@@ -596,9 +596,9 @@ class ChangesetBuilder:
             return None
 
 
-def _path_to_model_map(head: LineageProvider) -> Dict[str, str]:
+def _path_to_model_map(head: LineageProvider) -> dict[str, str]:
     """Map each model's ``resource_path`` (dbt ``original_file_path``) to its name."""
-    mapping: Dict[str, str] = {}
+    mapping: dict[str, str] = {}
     for model_name, model in head.get_models().items():
         if model.resource_path:
             mapping[_norm_path(model.resource_path)] = model_name
@@ -608,9 +608,9 @@ def _path_to_model_map(head: LineageProvider) -> Dict[str, str]:
 def git_changed_models(
     head: LineageProvider,
     git_base: str,
-    repo_dir: Optional[str] = None,
+    repo_dir: str | None = None,
     git_head: str = "HEAD",
-) -> Set[str]:
+) -> set[str]:
     """Return the set of models whose ``.sql`` file changed between ``git_base`` and ``git_head``.
 
     Files with no matching model (macros, tests, deleted files) are ignored, so
@@ -627,8 +627,8 @@ def git_changed_models_and_unmapped(
     head: LineageProvider,
     git_base: str,
     git_head: str = "HEAD",
-    repo_dir: Optional[str] = None,
-) -> Tuple[Set[str], List[str]]:
+    repo_dir: str | None = None,
+) -> tuple[set[str], list[str]]:
     """Split changed ``.sql`` files into (models that mapped, paths that did NOT).
 
     Reuses the same path->model map and git diff as :func:`git_changed_models` but also returns
@@ -637,8 +637,8 @@ def git_changed_models_and_unmapped(
     (spec honesty invariant). Non-model SQL (macros/tests/snapshots) shows up here too.
     """
     path_to_model = _path_to_model_map(head)
-    matched: Set[str] = set()
-    unmapped: List[str] = []
+    matched: set[str] = set()
+    unmapped: list[str] = []
     for changed_file in _git_changed_sql_files(git_base, repo_dir, git_head):
         model = path_to_model.get(_norm_path(changed_file))
         if model:
@@ -648,7 +648,7 @@ def git_changed_models_and_unmapped(
     return matched, unmapped
 
 
-def git_rev_list(base: str, head: str, repo_dir: Optional[str] = None) -> List[str]:
+def git_rev_list(base: str, head: str, repo_dir: str | None = None) -> list[str]:
     """Enumerate commits in ``base..head`` (oldest -> newest) that touch a ``.sql`` file.
 
     Each surviving commit is replayed as one changeset (one commit ≈ one squash-merged PR).
@@ -669,7 +669,7 @@ def git_rev_list(base: str, head: str, repo_dir: Optional[str] = None) -> List[s
     return [line.strip() for line in result.stdout.splitlines() if line.strip()]
 
 
-def changes_from_dicts(entries: List[Dict[str, Any]]) -> List[ColumnChange]:
+def changes_from_dicts(entries: list[dict[str, Any]]) -> list[ColumnChange]:
     """Reconstruct :class:`ColumnChange` objects from the ``changeset.changes`` JSON shape.
 
     Accepts the dicts produced by :meth:`ColumnChange.to_dict` (model/column/kind + optional
@@ -678,7 +678,7 @@ def changes_from_dicts(entries: List[Dict[str, Any]]) -> List[ColumnChange]:
     expressions/reason are not needed for policy evaluation. Unknown/malformed entries raise a
     ``ValueError`` (via the enum constructors) so a corrupt corpus fails loudly.
     """
-    changes: List[ColumnChange] = []
+    changes: list[ColumnChange] = []
     for entry in entries:
         semantic_raw = entry.get("semantic")
         semantic = SemanticChangeKind(semantic_raw) if semantic_raw else None
@@ -701,11 +701,11 @@ def changes_from_dicts(entries: List[Dict[str, Any]]) -> List[ColumnChange]:
 def build_git_changeset(
     head: LineageProvider,
     git_base: str,
-    repo_dir: Optional[str] = None,
+    repo_dir: str | None = None,
     honor_overrides: bool = True,
-    collect: Optional[OverrideResolution] = None,
+    collect: OverrideResolution | None = None,
     git_head: str = "HEAD",
-) -> List[ColumnChange]:
+) -> list[ColumnChange]:
     """Fallback changeset: diff ``.sql`` model files between ``git_base`` and ``git_head``.
 
     When only one manifest is available we cannot diff columns, so every column
@@ -726,7 +726,7 @@ def build_git_changeset(
         return []
 
     head_models = head.get_models()
-    chosen: Dict[Tuple[str, str], ColumnChange] = {}
+    chosen: dict[tuple[str, str], ColumnChange] = {}
     for model_name in changed_models:
         model = head_models[model_name]
         for column in sorted(model.columns):
@@ -742,7 +742,7 @@ def build_git_changeset(
 
     changes = sorted(chosen.values(), key=lambda c: (c.model, c.column))
     if honor_overrides:
-        model_to_sql: Dict[str, Optional[str]] = {
+        model_to_sql: dict[str, str | None] = {
             model_name: ChangesetBuilder._safe_compiled_sql(head, model_name)
             for model_name in changed_models
         }
@@ -753,7 +753,7 @@ def build_git_changeset(
     return changes
 
 
-def scope_changes_to_models(changes: List[ColumnChange], models: Set[str]) -> List[ColumnChange]:
+def scope_changes_to_models(changes: list[ColumnChange], models: set[str]) -> list[ColumnChange]:
     """Keep only changes whose model is in ``models``.
 
     Used to intersect a precise two-manifest changeset with the set of models
@@ -768,8 +768,8 @@ def _norm_path(path: str) -> str:
 
 
 def _git_changed_sql_files(
-    git_base: str, repo_dir: Optional[str], git_head: str = "HEAD"
-) -> List[str]:
+    git_base: str, repo_dir: str | None, git_head: str = "HEAD"
+) -> list[str]:
     try:
         result = subprocess.run(
             ["git", "diff", "--name-only", f"{git_base}...{git_head}", "--", "*.sql"],
@@ -786,20 +786,20 @@ def _git_changed_sql_files(
 
 def build_changeset_report(
     source: str,
-    changes: List[ColumnChange],
-    aggregated: Dict[str, object],
-) -> Dict[str, object]:
+    changes: list[ColumnChange],
+    aggregated: dict[str, object],
+) -> dict[str, object]:
     """Assemble the final report: a ``changeset`` block plus the aggregated impact.
 
     The impact keys (``summary``, ``affected_models``, ``affected_columns``,
     ``affected_exposures``) are a superset of the single-column ``impact`` block,
     so existing consumers keep working; ``changeset`` and ``by_change`` are added.
     """
-    by_kind: Dict[str, int] = {}
+    by_kind: dict[str, int] = {}
     for change in changes:
         by_kind[change.kind.value] = by_kind.get(change.kind.value, 0) + 1
 
-    report: Dict[str, object] = {
+    report: dict[str, object] = {
         "changeset": {
             "source": source,
             "total_changes": len(changes),

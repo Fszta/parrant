@@ -1,8 +1,9 @@
 import os
 from pathlib import Path
-from typing import Dict, Any
-from dbt.cli.main import dbtRunner
+from typing import Any
+
 import duckdb
+from dbt.cli.main import dbtRunner
 
 
 def setup_test_db(project_dir: Path) -> Path:
@@ -59,7 +60,7 @@ def setup_test_db(project_dir: Path) -> Path:
     return db_path
 
 
-def setup_dbt_project(project_dir: Path) -> Dict[str, Any]:
+def setup_dbt_project(project_dir: Path) -> dict[str, Any]:
     """Setup dbt project and return paths to artifacts."""
     dbt = dbtRunner()
 
@@ -132,7 +133,7 @@ def setup_dbt_project(project_dir: Path) -> Dict[str, Any]:
 
                         conn.close()
                     except Exception as e:
-                        error_msg += f"\nDatabase inspection error: {str(e)}"
+                        error_msg += f"\nDatabase inspection error: {e!s}"
 
                 raise Exception(error_msg)
 

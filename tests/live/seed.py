@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 import requests
 
@@ -52,12 +52,12 @@ class Auth:
     """
 
     base_url: str
-    api_key: Optional[str] = None
-    session_id: Optional[str] = None
-    username: Optional[str] = None
-    password: Optional[str] = None
+    api_key: str | None = None
+    session_id: str | None = None
+    username: str | None = None
+    password: str | None = None
 
-    def headers(self) -> Dict[str, str]:
+    def headers(self) -> dict[str, str]:
         headers = {"Content-Type": "application/json"}
         if self.api_key:
             headers["x-api-key"] = self.api_key
@@ -65,7 +65,7 @@ class Auth:
             headers["X-Metabase-Session"] = self.session_id
         return headers
 
-    def cli_args(self) -> List[str]:
+    def cli_args(self) -> list[str]:
         """Credential flags for ``parrant metabase-extract``.
 
         Prefers the API key; else username+password. A bare session id is not a CLI-facing
@@ -92,7 +92,7 @@ class SeededContent:
     native_card_id: int
     mbql_card_id: int
     dashboard_id: int
-    card_ids: List[int] = field(default_factory=list)
+    card_ids: list[int] = field(default_factory=list)
 
 
 def wait_for_health(base_url: str, timeout: float = 180.0, interval: float = 3.0) -> None:
@@ -101,7 +101,7 @@ def wait_for_health(base_url: str, timeout: float = 180.0, interval: float = 3.0
     Metabase takes 30-90s to boot, so the default timeout is generous.
     """
     deadline = time.monotonic() + timeout
-    last_error: Optional[str] = None
+    last_error: str | None = None
     while time.monotonic() < deadline:
         try:
             resp = requests.get(f"{base_url}/api/health", timeout=10)
@@ -116,9 +116,9 @@ def wait_for_health(base_url: str, timeout: float = 180.0, interval: float = 3.0
 
 def authenticate(
     base_url: str,
-    api_key: Optional[str] = None,
-    username: Optional[str] = None,
-    password: Optional[str] = None,
+    api_key: str | None = None,
+    username: str | None = None,
+    password: str | None = None,
     site_name: str = "parrant-live",
 ) -> Auth:
     """Resolve credentials into an :class:`Auth`.
@@ -143,7 +143,7 @@ def authenticate(
     return Auth(base_url=base_url, session_id=session_id, username=username, password=password)
 
 
-def _setup_token(base_url: str) -> Optional[str]:
+def _setup_token(base_url: str) -> str | None:
     resp = requests.get(f"{base_url}/api/session/properties", timeout=15)
     if resp.status_code != 200:
         return None
@@ -213,7 +213,7 @@ def find_sample_database(auth: Auth) -> int:
 
 def table_and_field_ids(
     auth: Auth, database_id: int, table_name: str = SAMPLE_TABLE
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Return ``{"table_id": int, "field_ids": {NAME: id}}`` for one Sample-DB table.
 
     Uses the bulk ``GET /api/database/:id/metadata`` so the MBQL card can be built from real
@@ -264,7 +264,7 @@ def create_mbql_card(
     return _create_card(auth, name, dataset_query)
 
 
-def _create_card(auth: Auth, name: str, dataset_query: Dict[str, Any]) -> int:
+def _create_card(auth: Auth, name: str, dataset_query: dict[str, Any]) -> int:
     body = _request(
         auth,
         "POST",
@@ -282,7 +282,7 @@ def _create_card(auth: Auth, name: str, dataset_query: Dict[str, Any]) -> int:
     return card_id
 
 
-def create_dashboard(auth: Auth, card_ids: List[int], name: str = "parrant-live dashboard") -> int:
+def create_dashboard(auth: Auth, card_ids: list[int], name: str = "parrant-live dashboard") -> int:
     """Create a dashboard (``POST /api/dashboard``) and place each card on it (``PUT``)."""
     body = _request(auth, "POST", "/api/dashboard", json={"name": name})
     dashboard_id = (body or {}).get("id")

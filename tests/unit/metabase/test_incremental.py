@@ -9,8 +9,6 @@ and always recomputes meta from the fresh mapping.
 
 from __future__ import annotations
 
-from typing import Dict, List, Optional
-
 from parrant.metabase.client import MetabaseClient
 from parrant.metabase.extract import ExtractConfig, run_extract
 from parrant.models.schema import (
@@ -65,9 +63,9 @@ class SpyClient(MetabaseClient):
 
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
-        self.fetched_dashboard_ids: List[int] = []
+        self.fetched_dashboard_ids: list[int] = []
 
-    def get_dashboards(self, dashboard_ids: List[int], max_workers: int = 8) -> Dict[int, dict]:
+    def get_dashboards(self, dashboard_ids: list[int], max_workers: int = 8) -> dict[int, dict]:
         self.fetched_dashboard_ids.extend(dashboard_ids)
         return super().get_dashboards(dashboard_ids, max_workers=max_workers)
 
@@ -81,22 +79,22 @@ def _spy_client(session: FakeSession) -> SpyClient:
     )
 
 
-def _config(previous: Optional[MetabaseLineage], **overrides) -> ExtractConfig:
-    kwargs = dict(
-        metabase_base_url="https://metabase.example.com",
-        database_ids=[2],
-        extractor_version="9.9.9",
-        dialect="snowflake",
-        previous=previous,
-    )
+def _config(previous: MetabaseLineage | None, **overrides) -> ExtractConfig:
+    kwargs = {
+        "metabase_base_url": "https://metabase.example.com",
+        "database_ids": [2],
+        "extractor_version": "9.9.9",
+        "dialect": "snowflake",
+        "previous": previous,
+    }
     kwargs.update(overrides)
     return ExtractConfig(**kwargs)  # type: ignore[arg-type]
 
 
 def _prev_snapshot(
-    dashboards: List[MetabaseDashboard],
+    dashboards: list[MetabaseDashboard],
     schema_version: int = 2,
-    database_ids: Optional[List[int]] = None,
+    database_ids: list[int] | None = None,
 ) -> MetabaseLineage:
     return MetabaseLineage(
         schema_version=schema_version,

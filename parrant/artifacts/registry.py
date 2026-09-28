@@ -1,22 +1,22 @@
-from typing import Any, Dict, List, Optional, Set, Tuple
-from dataclasses import dataclass, field
 import logging
+from dataclasses import dataclass, field
+from typing import Any
 
 from parrant.artifacts.catalog import CatalogReader
-from parrant.artifacts.manifest import ManifestReader
-from parrant.models.schema import (
-    Model,
-    Column,
-    SQLParseResult,
-    ColumnLineage,
-    Exposure,
-    Coverage,
-    TestNode,
-)
 from parrant.artifacts.exceptions import (
     ModelNotFoundError,
-    RegistryNotLoadedError,
     RegistryError,
+    RegistryNotLoadedError,
+)
+from parrant.artifacts.manifest import ManifestReader
+from parrant.models.schema import (
+    Column,
+    ColumnLineage,
+    Coverage,
+    Exposure,
+    Model,
+    SQLParseResult,
+    TestNode,
 )
 from parrant.parser import SQLColumnParser
 
@@ -43,17 +43,17 @@ class ParseStats:
     # them is preserved from the manifest dependency graph.
     opaque: int = 0
     skipped_no_sql: int = 0
-    failed_model_names: List[str] = field(default_factory=list)
-    opaque_model_names: List[str] = field(default_factory=list)
-    skipped_model_names: List[str] = field(default_factory=list)
+    failed_model_names: list[str] = field(default_factory=list)
+    opaque_model_names: list[str] = field(default_factory=list)
+    skipped_model_names: list[str] = field(default_factory=list)
 
 
 @dataclass
 class RegistryState:
     """Immutable state of the registry."""
 
-    models: Dict[str, Model]
-    exposures: Dict[str, Exposure]
+    models: dict[str, Model]
+    exposures: dict[str, Exposure]
     is_loaded: bool = False
 
 
@@ -62,14 +62,14 @@ class ModelRegistry:
         self,
         catalog_path: str,
         manifest_path: str,
-        adapter_override: Optional[str] = None,
+        adapter_override: str | None = None,
     ):
         self._catalog_reader = CatalogReader(catalog_path)
         self._manifest_reader = ManifestReader(manifest_path)
         self._state = RegistryState(models={}, exposures={}, is_loaded=False)
-        self._sql_parser: Optional[SQLColumnParser] = None
-        self._dialect: Optional[str] = None
-        self._adapter_override: Optional[str] = adapter_override
+        self._sql_parser: SQLColumnParser | None = None
+        self._dialect: str | None = None
+        self._adapter_override: str | None = adapter_override
         self._parse_stats: ParseStats = ParseStats()
         # Names of model-like nodes that have a real catalog entry (data types known).
         # A manifest node absent from this set is "catalog-missing": still analyzable via
@@ -77,32 +77,32 @@ class ModelRegistry:
         self._catalog_backed_model_names: set = set()
         # Lazily-built reverse index: upstream column -> models that reference it ONLY in a
         # predicate (filter/join), i.e. a row-set dependency rather than a value one.
-        self._filter_dependents: Optional[Dict[str, set]] = None
+        self._filter_dependents: dict[str, set] | None = None
         # Reverse index built at load time: (model, column) -> tests targeting that column.
         # Keys are lowercased to match the codebase's case-insensitive model/column naming.
-        self._column_tests: Dict[Tuple[str, str], List[TestNode]] = {}
+        self._column_tests: dict[tuple[str, str], list[TestNode]] = {}
         # Reverse index for the *referenced* side of relationships tests: (model, column) ->
         # relationships tests pointing AT that column via ``to=``/``field=``. Removing this
         # parent key breaks the child's relationships test just as surely as removing the
         # child column does, so it is a distinct provable-break lookup.
-        self._referenced_tests: Dict[Tuple[str, str], List[TestNode]] = {}
+        self._referenced_tests: dict[tuple[str, str], list[TestNode]] = {}
         # Tests we could not attribute to a (model, column) pair — kept for coverage honesty
         # (counted, never guessed at). See :meth:`get_unattributable_test_count`.
-        self._unattributable_tests: List[TestNode] = []
+        self._unattributable_tests: list[TestNode] = []
         # Every test node's unique_id present in this manifest. Lets the verdict classifier
         # confirm a base test STILL EXISTS in head before flagging it broken — so a rename
         # that updates the test's yml (new unique_id) is not a false break.
-        self._test_unique_ids: Set[str] = set()
+        self._test_unique_ids: set[str] = set()
         # model (lowercased) -> every test that breaks if the whole model is removed: those
         # attached to it AND relationships tests referencing it. Column-level recovery can
         # miss a model's tested columns, but a wholly-removed model breaks all of its tests.
-        self._model_tests: Dict[str, List[TestNode]] = {}
+        self._model_tests: dict[str, list[TestNode]] = {}
 
     @property
     def is_loaded(self) -> bool:
         return self._state.is_loaded
 
-    def _initialize_models(self) -> Dict[str, Model]:
+    def _initialize_models(self) -> dict[str, Model]:
         """Initialize the model universe from the *manifest*, enriched by the catalog.
 
         The manifest is the source of truth for which models exist: it lists every
@@ -124,7 +124,7 @@ class ModelRegistry:
         except Exception as e:
             raise RegistryError(f"Failed to initialize models: {e}")
 
-        models: Dict[str, Model] = {}
+        models: dict[str, Model] = {}
         catalog_backed: set = set()
 
         # 1) Seed the universe from manifest model-like nodes (model/snapshot/seed).
@@ -168,7 +168,7 @@ class ModelRegistry:
             raise RegistryError("No models found in manifest or catalog")
         return models
 
-    def _apply_dependencies(self, models: Dict[str, Model]) -> None:
+    def _apply_dependencies(self, models: dict[str, Model]) -> None:
         """Apply upstream and downstream dependencies to models."""
         try:
             upstream_deps = self._manifest_reader.get_model_upstream()
@@ -176,7 +176,7 @@ class ModelRegistry:
             model_exposures = self._manifest_reader.get_model_exposures()
 
             manifest_sources = self._manifest_reader.manifest.get("sources", {})
-            for source_id, source_node in manifest_sources.items():
+            for source_node in manifest_sources.values():
                 source_name = source_node.get("source_name")
                 source_identifier = (
                     source_node.get("identifier", "").lower()
@@ -202,7 +202,7 @@ class ModelRegistry:
         except Exception as e:
             raise RegistryError(f"Failed to apply dependencies: {e}")
 
-    def _apply_descriptions(self, models: Dict[str, Model]) -> None:
+    def _apply_descriptions(self, models: dict[str, Model]) -> None:
         """Populate model and column descriptions from the dbt-authored docs.
 
         The *manifest* is the primary source: dbt records the docs a person wrote in
@@ -234,7 +234,7 @@ class ModelRegistry:
                 if manifest_desc:
                     column.description = manifest_desc
 
-    def _apply_meta(self, models: Dict[str, Model]) -> None:
+    def _apply_meta(self, models: dict[str, Model]) -> None:
         """Attach arbitrary dbt ``meta`` from the manifest onto models and columns.
 
         User-authored meta (ANY key) is namespaced under ``Model.metadata["dbt_meta"]``
@@ -269,7 +269,7 @@ class ModelRegistry:
                 if col_meta:
                     column.metadata = col_meta
 
-    def _load_exposures(self) -> Dict[str, Exposure]:
+    def _load_exposures(self) -> dict[str, Exposure]:
         """Load exposures from manifest."""
         exposures = {}
         exposure_data = self._manifest_reader.get_exposures()
@@ -311,7 +311,7 @@ class ModelRegistry:
         self._test_unique_ids = set()
         self._model_tests = {}
 
-        def _attach_to_model(model_name: Optional[str], test: TestNode) -> None:
+        def _attach_to_model(model_name: str | None, test: TestNode) -> None:
             if model_name is None:
                 return
             bucket = self._model_tests.setdefault(model_name.lower(), [])
@@ -337,14 +337,14 @@ class ModelRegistry:
             key = (test.target_model.lower(), test.target_column.lower())
             self._column_tests.setdefault(key, []).append(test)
 
-    def get_column_tests(self, model: str, column: str) -> List[TestNode]:
+    def get_column_tests(self, model: str, column: str) -> list[TestNode]:
         """Return the dbt tests targeting ``model.column`` (case-insensitive).
 
         Returns an empty list for an unknown (model, column) pair or one with no tests.
         """
         return list(self._column_tests.get((model.lower(), column.lower()), []))
 
-    def get_tests_referencing(self, model: str, column: str) -> List[TestNode]:
+    def get_tests_referencing(self, model: str, column: str) -> list[TestNode]:
         """Return relationships tests whose *referenced* (parent) side is ``model.column``.
 
         These break when the parent key is removed/renamed, distinct from the tests that
@@ -353,7 +353,7 @@ class ModelRegistry:
         """
         return list(self._referenced_tests.get((model.lower(), column.lower()), []))
 
-    def get_model_tests(self, model: str) -> List[TestNode]:
+    def get_model_tests(self, model: str) -> list[TestNode]:
         """Every test that breaks if ``model`` is removed wholesale (case-insensitive).
 
         Includes tests attached to the model and relationships tests referencing it — used
@@ -362,7 +362,7 @@ class ModelRegistry:
         """
         return list(self._model_tests.get(model.lower(), []))
 
-    def get_test_unique_ids(self) -> Set[str]:
+    def get_test_unique_ids(self) -> set[str]:
         """All dbt test unique_ids present in this manifest.
 
         The verdict classifier intersects a base test against this head set to confirm the
@@ -379,11 +379,11 @@ class ModelRegistry:
         """
         return len(self._unattributable_tests)
 
-    def get_unattributable_tests(self) -> List[TestNode]:
+    def get_unattributable_tests(self) -> list[TestNode]:
         """The test nodes whose (model, column) target could not be attributed."""
         return list(self._unattributable_tests)
 
-    def _process_lineage(self, models: Dict[str, Model]) -> None:
+    def _process_lineage(self, models: dict[str, Model]) -> None:
         """Process and apply column lineage to models."""
         logger = logging.getLogger(__name__)
 
@@ -501,7 +501,7 @@ class ModelRegistry:
             model.upstream = set(model.upstream or set()) | set(manifest_upstream)
 
     def _apply_column_lineage(
-        self, model: Model, parse_result: SQLParseResult, models: Dict[str, Model]
+        self, model: Model, parse_result: SQLParseResult, models: dict[str, Model]
     ) -> None:
         """Apply parsed lineage to model columns.
 
@@ -534,7 +534,7 @@ class ModelRegistry:
         self._declare_unresolved_edges(model, parse_result, models)
 
     def _declare_unresolved_edges(
-        self, model: Model, parse_result: SQLParseResult, models: Dict[str, Model]
+        self, model: Model, parse_result: SQLParseResult, models: dict[str, Model]
     ) -> None:
         """Finalize the model's unresolved-edge markers and stamp them onto its metadata.
 
@@ -565,7 +565,7 @@ class ModelRegistry:
         The finalized set is stored on ``model.metadata["unresolved_edges"]`` as a list of dicts,
         mirroring ``star_sources`` — the complete, uncapped machine surface the resolution/confidence pass consumes.
         """
-        markers: List[Dict[str, Any]] = []
+        markers: list[dict[str, Any]] = []
 
         # 1. Parser markers: stamp the model name.
         for edge in parse_result.unresolved_edges:
@@ -584,7 +584,7 @@ class ModelRegistry:
 
         for col_name, column in model.columns.items():
             for lineage in column.lineage or []:
-                kept: Set[str] = set()
+                kept: set[str] = set()
                 for token in lineage.source_columns:
                     reason = self._registry_phantom_reason(
                         token, phantom_bases, declared_upstreams, models
@@ -609,10 +609,10 @@ class ModelRegistry:
     def _registry_phantom_reason(
         self,
         token: str,
-        phantom_bases: Set[str],
-        declared_upstreams: Set[str],
-        models: Dict[str, Model],
-    ) -> Optional[str]:
+        phantom_bases: set[str],
+        declared_upstreams: set[str],
+        models: dict[str, Model],
+    ) -> str | None:
         """Classify a source token against registry ground truth, or ``None`` to keep it.
 
         * ``unexpandable_star`` — qualifier is a leaked ``select *`` base, not a declared upstream.
@@ -649,10 +649,10 @@ class ModelRegistry:
         return tail.strip().strip('"').lower()
 
     @staticmethod
-    def _dedupe_edge_records(records: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    def _dedupe_edge_records(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """Order-stable de-dup of marker dicts on (column, reason, detail)."""
-        seen: Set[Tuple[Any, Any, Any]] = set()
-        unique: List[Dict[str, Any]] = []
+        seen: set[tuple[Any, Any, Any]] = set()
+        unique: list[dict[str, Any]] = []
         for record in records:
             key = (record.get("column"), record.get("reason"), record.get("detail"))
             if key not in seen:
@@ -660,7 +660,7 @@ class ModelRegistry:
                 unique.append(record)
         return unique
 
-    def _process_star_references(self, models: Dict[str, Model]) -> None:
+    def _process_star_references(self, models: dict[str, Model]) -> None:
         """Process star references between models."""
         for model in models.values():
             if not model.metadata or "star_sources" not in model.metadata:
@@ -689,7 +689,7 @@ class ModelRegistry:
         catalog-missing branch of :meth:`_apply_column_lineage`.
         """
         catalog_missing = bool(target.metadata and target.metadata.get("catalog_missing"))
-        for col_name, source_col in source.columns.items():
+        for col_name in source.columns:
             if col_name not in target.columns:
                 if not catalog_missing:
                     continue
@@ -746,13 +746,13 @@ class ModelRegistry:
         except Exception as e:
             raise RegistryError(f"Failed to load registry: {e}")
 
-    def get_models(self) -> Dict[str, Model]:
+    def get_models(self) -> dict[str, Model]:
         """Get all models in the registry."""
         if not self.is_loaded:
             raise RegistryNotLoadedError("Registry must be loaded before accessing models")
         return self._state.models
 
-    def get_dialect(self) -> Optional[str]:
+    def get_dialect(self) -> str | None:
         """Return the resolved SQL dialect (adapter), or ``None`` when unknown.
 
         Public accessor over the dialect the registry already computes at load time
@@ -771,7 +771,7 @@ class ModelRegistry:
             raise ModelNotFoundError(f"Model '{model_name}' not found")
         return model
 
-    def get_model_dbt_meta(self, model: str) -> Dict[str, Any]:
+    def get_model_dbt_meta(self, model: str) -> dict[str, Any]:
         """Arbitrary user-authored dbt ``meta`` for a model (case-insensitive).
 
         Reads the meta namespaced under ``Model.metadata["dbt_meta"]`` by
@@ -784,7 +784,7 @@ class ModelRegistry:
             return {}
         return dict(model_obj.metadata.get("dbt_meta") or {})
 
-    def get_model_config(self, model: str) -> Dict[str, Any]:
+    def get_model_config(self, model: str) -> dict[str, Any]:
         """The node's resolved dbt ``config`` dict for a model (case-insensitive).
 
         Reads the config namespaced under ``Model.metadata["dbt_config"]`` by
@@ -798,7 +798,7 @@ class ModelRegistry:
             return {}
         return dict(model_obj.metadata.get("dbt_config") or {})
 
-    def get_column_dbt_meta(self, model: str, column: str) -> Dict[str, Any]:
+    def get_column_dbt_meta(self, model: str, column: str) -> dict[str, Any]:
         """Arbitrary user-authored dbt ``meta`` for a column (case-insensitive).
 
         Reads ``Column.metadata`` populated by :meth:`_apply_meta`. Returns an empty dict
@@ -812,7 +812,7 @@ class ModelRegistry:
             return {}
         return dict(col.metadata)
 
-    def get_exposures(self) -> Dict[str, Exposure]:
+    def get_exposures(self) -> dict[str, Exposure]:
         """Get all exposures in the registry."""
         if not self.is_loaded:
             raise RegistryNotLoadedError("Registry must be loaded before accessing exposures")
@@ -899,7 +899,7 @@ class ModelRegistry:
         """Whether a model has a real catalog entry (known column types)."""
         return model_name.lower() in self._catalog_backed_model_names
 
-    def get_manifest_downstream(self) -> Dict[str, set]:
+    def get_manifest_downstream(self) -> dict[str, set]:
         """Manifest-level downstream child map, covering every model (not just catalog ones)."""
         return self._manifest_reader.get_model_downstream()
 
@@ -912,7 +912,7 @@ class ModelRegistry:
         is already reported as a value impact), so this stays the purely-predicate set.
         """
         if self._filter_dependents is None:
-            index: Dict[str, set] = {}
+            index: dict[str, set] = {}
             for name, model in self.get_models().items():
                 projected: set = set()
                 for column in model.columns.values():
@@ -931,7 +931,7 @@ class ModelRegistry:
         if not self._state.models:
             raise RegistryNotLoadedError("Registry must be loaded before accessing models")
 
-    def _find_compiled_sql(self, model_name: str) -> Optional[str]:
+    def _find_compiled_sql(self, model_name: str) -> str | None:
         """Find compiled SQL for a model from manifest or target file."""
         self._check_loaded()
         model_name_lower = model_name.lower()
@@ -953,7 +953,7 @@ class ModelRegistry:
                     compiled_sql = f.read()
                 model.compiled_sql = compiled_sql
                 return compiled_sql
-            except (FileNotFoundError, IOError):
+            except (OSError, FileNotFoundError):
                 pass
 
         return None

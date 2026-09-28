@@ -11,8 +11,6 @@ skipped) so a low-coverage run is never mistaken for a clean pass. JSON output i
 
 from __future__ import annotations
 
-from typing import List
-
 from parrant.models.schema import BacktestReport, BacktestRuleStat
 
 
@@ -38,7 +36,7 @@ def _totals_line(report: BacktestReport) -> str:
 
 def render_backtest_table(report: BacktestReport) -> str:
     """A fixed-width text table for terminals — the per-rule aggregate + totals + fidelity note."""
-    lines: List[str] = []
+    lines: list[str] = []
     lines.append(f"Policy backtest [{report.mode}] — policy: {report.policy_source}")
     if report.base or report.head:
         lines.append(f"Range: {report.base}..{report.head}")
@@ -75,7 +73,7 @@ def render_backtest_table(report: BacktestReport) -> str:
 
 def render_backtest_markdown(report: BacktestReport) -> str:
     """A Markdown report for a CI artifact / PR comment / agent over MCP."""
-    lines: List[str] = []
+    lines: list[str] = []
     lines.append(f"## Policy backtest — `{report.policy_source}`")
     lines.append("")
     lines.append(f"- **Mode:** {report.mode}")

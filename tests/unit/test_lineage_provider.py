@@ -18,7 +18,7 @@ that shares no code with today's engine is what exercises the consumers.
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional, Set
+from typing import Any
 
 from parrant.artifacts.exceptions import ModelNotFoundError
 from parrant.lineage.changeset import ChangeKind, ChangesetBuilder
@@ -49,16 +49,16 @@ class InMemoryProvider:
 
     def __init__(
         self,
-        models: Dict[str, Model],
+        models: dict[str, Model],
         *,
-        exposures: Optional[Dict[str, Exposure]] = None,
-        dialect: Optional[str] = None,
-        downstream: Optional[Dict[str, Set[str]]] = None,
-        compiled: Optional[Dict[str, str]] = None,
-        column_tests: Optional[Dict[tuple, List[TestNode]]] = None,
-        catalog_backed: Optional[Set[str]] = None,
-        parse_failed: Optional[Set[str]] = None,
-        opaque: Optional[Set[str]] = None,
+        exposures: dict[str, Exposure] | None = None,
+        dialect: str | None = None,
+        downstream: dict[str, set[str]] | None = None,
+        compiled: dict[str, str] | None = None,
+        column_tests: dict[tuple, list[TestNode]] | None = None,
+        catalog_backed: set[str] | None = None,
+        parse_failed: set[str] | None = None,
+        opaque: set[str] | None = None,
     ) -> None:
         self._models = {name.lower(): model for name, model in models.items()}
         self._exposures = exposures or {}
@@ -84,7 +84,7 @@ class InMemoryProvider:
         return self._loaded
 
     # --- model / graph access ---------------------------------------------
-    def get_models(self) -> Dict[str, Model]:
+    def get_models(self) -> dict[str, Model]:
         return self._models
 
     def get_model(self, model_name: str) -> Model:
@@ -93,15 +93,15 @@ class InMemoryProvider:
             raise ModelNotFoundError(f"Model '{model_name}' not found")
         return model
 
-    def get_manifest_downstream(self) -> Dict[str, Set[str]]:
+    def get_manifest_downstream(self) -> dict[str, set[str]]:
         return self._downstream
 
     # --- column lineage ----------------------------------------------------
-    def get_column_lineage(self, model_name: str, column_name: str) -> List[ColumnLineage]:
+    def get_column_lineage(self, model_name: str, column_name: str) -> list[ColumnLineage]:
         column = self.get_column(model_name, column_name)
         return list(column.lineage or []) if column is not None else []
 
-    def get_column(self, model_name: str, column_name: str) -> Optional[Column]:
+    def get_column(self, model_name: str, column_name: str) -> Column | None:
         try:
             model = self.get_model(model_name)
         except ModelNotFoundError:
@@ -109,10 +109,10 @@ class InMemoryProvider:
         return model.columns.get(column_name) or model.columns.get(column_name.lower())
 
     # --- capabilities ------------------------------------------------------
-    def get_filter_dependents(self, source_column: str) -> Set[str]:
+    def get_filter_dependents(self, source_column: str) -> set[str]:
         return set()
 
-    def get_dialect(self) -> Optional[str]:
+    def get_dialect(self) -> str | None:
         return self._dialect
 
     def get_coverage(self) -> Coverage:
@@ -131,17 +131,17 @@ class InMemoryProvider:
     def is_catalog_backed(self, model_name: str) -> bool:
         return model_name.lower() in self._catalog_backed
 
-    def get_parse_failed_models(self) -> Set[str]:
+    def get_parse_failed_models(self) -> set[str]:
         return set(self._parse_failed)
 
-    def get_opaque_models(self) -> Set[str]:
+    def get_opaque_models(self) -> set[str]:
         return set(self._opaque)
 
-    def get_compiled_sql(self, model_name: str) -> Optional[str]:
+    def get_compiled_sql(self, model_name: str) -> str | None:
         return self._compiled.get(model_name.lower())
 
     # --- metadata ----------------------------------------------------------
-    def get_exposures(self) -> Dict[str, Exposure]:
+    def get_exposures(self) -> dict[str, Exposure]:
         return self._exposures
 
     def get_exposure(self, exposure_name: str) -> Exposure:
@@ -150,36 +150,39 @@ class InMemoryProvider:
             raise ValueError(f"Exposure '{exposure_name}' not found")
         return exposure
 
-    def get_column_tests(self, model: str, column: str) -> List[TestNode]:
+    def get_column_tests(self, model: str, column: str) -> list[TestNode]:
         return list(self._column_tests.get((model.lower(), column.lower()), []))
 
-    def get_tests_referencing(self, model: str, column: str) -> List[TestNode]:
+    def get_tests_referencing(self, model: str, column: str) -> list[TestNode]:
         return []
 
-    def get_model_tests(self, model: str) -> List[TestNode]:
-        found: List[TestNode] = []
+    def get_model_tests(self, model: str) -> list[TestNode]:
+        found: list[TestNode] = []
         for (test_model, _column), tests in self._column_tests.items():
             if test_model == model.lower():
                 found.extend(tests)
         return found
 
-    def get_test_unique_ids(self) -> Set[str]:
+    def get_test_unique_ids(self) -> set[str]:
         return {t.unique_id for tests in self._column_tests.values() for t in tests}
 
     def get_unattributable_test_count(self) -> int:
         return 0
 
-    def get_model_dbt_meta(self, model: str) -> Dict[str, Any]:
+    def get_model_dbt_meta(self, model: str) -> dict[str, Any]:
         return {}
 
-    def get_column_dbt_meta(self, model: str, column: str) -> Dict[str, Any]:
+    def get_column_dbt_meta(self, model: str, column: str) -> dict[str, Any]:
+        return {}
+
+    def get_model_config(self, model: str) -> dict[str, Any]:
         return {}
 
 
 # --- fixtures --------------------------------------------------------------
 
 
-def _model(name: str, columns: Dict[str, Column], **kwargs) -> Model:
+def _model(name: str, columns: dict[str, Column], **kwargs) -> Model:
     return Model(
         name=name, schema="main", database="main", resource_type="model", columns=columns, **kwargs
     )

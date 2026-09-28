@@ -1,5 +1,3 @@
-from pathlib import Path
-
 from parrant.artifacts.manifest import ManifestReader
 
 
