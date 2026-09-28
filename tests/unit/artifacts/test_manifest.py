@@ -278,6 +278,44 @@ def test_source_dependencies_without_identifier(tmp_path):
     assert "raw_customers" in upstream["customers"]
 
 
+def test_seed_dependencies(tmp_path):
+    """A model ref()ing a seed must record the upstream edge (and the reverse downstream one).
+
+    Without the ``seed`` dep prefix the edge silently vanished: a seed change's consumers were
+    invisible to reachability and therefore to the rebuild selection.
+    """
+    manifest_data = {
+        "nodes": {
+            "model.jaffle_shop.customers": {
+                "name": "customers",
+                "resource_type": "model",
+                "depends_on": {"nodes": ["seed.jaffle_shop.country_codes"]},
+            },
+            "seed.jaffle_shop.country_codes": {
+                "name": "country_codes",
+                "resource_type": "seed",
+                "depends_on": {"nodes": []},
+            },
+        },
+        "sources": {},
+    }
+
+    manifest_path = tmp_path / "manifest.json"
+    with open(manifest_path, "w") as f:
+        json.dump(manifest_data, f)
+
+    reader = ManifestReader(manifest_path)
+    reader.load()
+
+    upstream = reader.get_model_upstream()
+    assert "customers" in upstream
+    assert "country_codes" in upstream["customers"]
+
+    downstream = reader.get_model_downstream()
+    assert "country_codes" in downstream
+    assert "customers" in downstream["country_codes"]
+
+
 @pytest.fixture
 def manifest_with_uppercase_names(tmp_path: Path) -> Path:
     """Create a manifest with uppercase model names and SQL references."""

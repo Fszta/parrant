@@ -110,7 +110,10 @@ class ManifestReader:
                             # Fallback to source name if identifier not found
                             source_name = parts[-1].lower()
                             upstream[model_name].add(source_name)
-                    elif parts[0] == "snapshot":
+                    elif parts[0] in ("snapshot", "seed"):
+                        # Seeds are upstream nodes like any other: without this edge a model
+                        # ref()ing a seed records no dependency, so the seed's consumers are
+                        # invisible to reachability and to the rebuild selection.
                         dep_name = parts[-1].lower()
                         upstream[model_name].add(dep_name)
 
