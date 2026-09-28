@@ -165,6 +165,126 @@ def test_impact_two_manifest_json_report(dbt_artifacts, base_artifacts):
     assert "by_change" in payload
 
 
+@pytest.fixture
+def missing_head_sql_artifacts(dbt_artifacts, tmp_path):
+    """A HEAD whose stg_accounts has NO compiled SQL available (embedded or on disk).
+
+    Written into a bare temp dir so the ``target/compiled/**`` on-disk recovery cannot
+    find it either — the model's logic diff is genuinely impossible on the head side.
+    """
+    catalog = copy.deepcopy(_load(dbt_artifacts["catalog_path"]))
+    manifest = copy.deepcopy(_load(dbt_artifacts["manifest_path"]))
+    node = manifest["nodes"]["model.test_project.stg_accounts"]
+    node.pop("compiled_code", None)
+    node.pop("compiled_path", None)
+    head_catalog = tmp_path / "head_catalog.json"
+    head_manifest = tmp_path / "head_manifest.json"
+    head_catalog.write_text(json.dumps(catalog))
+    head_manifest.write_text(json.dumps(manifest))
+    return {"catalog": str(head_catalog), "manifest": str(head_manifest)}
+
+
+def test_impact_missing_head_sql_is_indeterminate_widens_and_degrades(
+    dbt_artifacts, missing_head_sql_artifacts
+):
+    """A model with compiled SQL on base but none on head must never read as silent-safe.
+
+    The unprovable logic diff must (a) surface as explicit indeterminate changes in the
+    JSON report, (b) degrade the impact confidence, and (c) widen the rebuild selection.
+    """
+    result = _run_impact(
+        [
+            "--manifest",
+            missing_head_sql_artifacts["manifest"],
+            "--catalog",
+            missing_head_sql_artifacts["catalog"],
+            "--base-manifest",
+            str(dbt_artifacts["manifest_path"]),
+            "--base-catalog",
+            str(dbt_artifacts["catalog_path"]),
+            "--format",
+            "json",
+        ]
+    )
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+
+    # (a) explicit indeterminate changes for the SQL-less model in the JSON report.
+    indeterminate = [
+        c
+        for c in payload["changeset"]["changes"]
+        if c["model"] == "stg_accounts" and c.get("logic_diff_status") == "indeterminate"
+    ]
+    assert indeterminate, payload["changeset"]["changes"]
+    assert all(c["kind"] == "logic_changed" for c in indeterminate)
+    assert all(c["semantic"] == "indeterminate" for c in indeterminate)
+
+    # (b) confidence is degraded and names the model.
+    confidence = payload["confidence"]
+    assert confidence["level"] == "partial"
+    assert "stg_accounts" in confidence["indeterminate_logic_models"]
+    assert confidence["indeterminate_logic"] >= 1
+
+    # (c) the rebuild selection widens: nothing downstream may be skipped.
+    selection = payload["selection"]
+    assert selection["widened_to_all_reachable"] is True
+    assert selection["skippable_models"] == []
+    assert "stg_accounts" in selection["rebuild_models"]
+
+
+def test_impact_identical_catalogs_stamp_structural_diff_degraded(dbt_artifacts, logic_change_base):
+    """ONE catalog mounted on both sides => removed/type_changed can never surface.
+
+    ``logic_change_base`` copies the head catalog unchanged, reproducing the real deployment
+    where a single prod catalog backs both sides. The report must say so explicitly.
+    """
+    args = [
+        "--manifest",
+        str(dbt_artifacts["manifest_path"]),
+        "--catalog",
+        str(dbt_artifacts["catalog_path"]),
+        "--base-manifest",
+        logic_change_base["manifest"],
+        "--base-catalog",
+        logic_change_base["catalog"],
+    ]
+    result = _run_impact([*args, "--format", "json"])
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+
+    stamp = payload.get("structural_diff")
+    assert stamp is not None, "identical base/head catalogs must stamp the report as degraded"
+    assert stamp["status"] == "degraded"
+    assert stamp["reason"]
+    assert payload["summary"]["structural_diff"] == "degraded"
+
+    # The markdown / PR-comment surface carries a visible honesty line too.
+    markdown = _run_impact(args)
+    assert markdown.exit_code == 0, markdown.output
+    assert "Structural diff degraded" in markdown.output
+
+
+def test_impact_distinct_catalogs_carry_no_degraded_stamp(dbt_artifacts, base_artifacts):
+    result = _run_impact(
+        [
+            "--manifest",
+            str(dbt_artifacts["manifest_path"]),
+            "--catalog",
+            str(dbt_artifacts["catalog_path"]),
+            "--base-manifest",
+            base_artifacts["manifest"],
+            "--base-catalog",
+            base_artifacts["catalog"],
+            "--format",
+            "json",
+        ]
+    )
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert "structural_diff" not in payload
+    assert "structural_diff" not in payload["summary"]
+
+
 def test_impact_two_manifest_markdown_default(dbt_artifacts, base_artifacts):
     result = _run_impact(
         [
@@ -256,32 +376,104 @@ def test_scope_git_requires_base_manifest(dbt_artifacts):
     assert "scope-git" in result.output
 
 
-def test_scope_git_filters_to_changed_models(dbt_artifacts, base_artifacts, monkeypatch):
-    # The two-manifest diff detects a change on stg_accounts, but we scope to a
-    # git diff that touched no matching model -> the changeset is emptied.
+def _scope_git_args(dbt_artifacts, base_artifacts, *extra):
+    return [
+        "--manifest",
+        str(dbt_artifacts["manifest_path"]),
+        "--catalog",
+        str(dbt_artifacts["catalog_path"]),
+        "--base-manifest",
+        base_artifacts["manifest"],
+        "--base-catalog",
+        base_artifacts["catalog"],
+        "--scope-git",
+        "origin/main",
+        *extra,
+    ]
+
+
+def _json_report(result):
+    """Parse the JSON report from CliRunner output (stderr warnings may precede it)."""
+    output = result.output
+    return json.loads(output[output.index("{") :])
+
+
+def _patch_git_diff(monkeypatch, files):
     from parrant.lineage import changeset
 
     monkeypatch.setattr(
         changeset,
-        "_git_changed_sql_files",
-        lambda ref, repo_dir=None, git_head="HEAD": ["macros/only.sql"],
+        "_git_changed_files",
+        lambda ref, repo_dir=None, git_head="HEAD": files,
     )
-    result = _run_impact(
-        [
-            "--manifest",
-            str(dbt_artifacts["manifest_path"]),
-            "--catalog",
-            str(dbt_artifacts["catalog_path"]),
-            "--base-manifest",
-            base_artifacts["manifest"],
-            "--base-catalog",
-            base_artifacts["catalog"],
-            "--scope-git",
-            "origin/main",
-        ]
-    )
+
+
+def test_scope_git_filters_to_changed_models(dbt_artifacts, base_artifacts, monkeypatch):
+    # The two-manifest diff detects a change on stg_accounts, but the git diff only
+    # touched a DIFFERENT mapped model -> the changeset is legitimately emptied.
+    _patch_git_diff(monkeypatch, ["models/marts/transactions.sql"])
+    result = _run_impact(_scope_git_args(dbt_artifacts, base_artifacts))
     assert result.exit_code == 0, result.output
     assert "No column changes detected" in result.output
+
+
+def test_scope_git_keeps_changes_on_touched_model(dbt_artifacts, base_artifacts, monkeypatch):
+    # Regression: an ordinary model-.sql diff still scopes exactly as before.
+    _patch_git_diff(monkeypatch, ["models/staging/stg_accounts.sql"])
+    result = _run_impact(_scope_git_args(dbt_artifacts, base_artifacts, "--format", "json"))
+    assert result.exit_code == 0, result.output
+    report = _json_report(result)
+    changed_models = {c["model"] for c in report["changeset"]["changes"]}
+    assert changed_models == {"stg_accounts"}
+    assert report["scope_git"]["applied"] is True
+    assert report["scope_git"]["reason"] is None
+
+
+def test_scope_git_macro_only_diff_disables_scoping(dbt_artifacts, base_artifacts, monkeypatch):
+    # FAIL-SAFE: a macro can rewrite the compiled SQL of any model, so a macro-only
+    # diff must NOT empty the changeset into a silent SAFE. Scoping is disabled and
+    # the reason is visible in the JSON report.
+    _patch_git_diff(monkeypatch, ["macros/only.sql"])
+    result = _run_impact(_scope_git_args(dbt_artifacts, base_artifacts, "--format", "json"))
+    assert result.exit_code == 0, result.output
+    report = _json_report(result)
+    assert report["changeset"]["total_changes"] > 0
+    assert report["scope_git"]["applied"] is False
+    assert report["scope_git"]["reason"].startswith("disabled — unmappable changed files:")
+    assert "macros/only.sql" in report["scope_git"]["reason"]
+    assert "macros/only.sql" in report["scope_git"]["unmappable_files"]
+
+
+def test_scope_git_dbt_project_yml_disables_scoping(dbt_artifacts, base_artifacts, monkeypatch):
+    _patch_git_diff(monkeypatch, ["dbt_project.yml"])
+    result = _run_impact(_scope_git_args(dbt_artifacts, base_artifacts, "--format", "json"))
+    assert result.exit_code == 0, result.output
+    report = _json_report(result)
+    assert report["changeset"]["total_changes"] > 0
+    assert report["scope_git"]["applied"] is False
+    assert "dbt_project.yml" in report["scope_git"]["reason"]
+
+
+def test_scope_git_python_model_disables_scoping(dbt_artifacts, base_artifacts, monkeypatch):
+    # The bundled project has no Python models, so this .py cannot be mapped.
+    _patch_git_diff(monkeypatch, ["models/marts/py_scores.py"])
+    result = _run_impact(_scope_git_args(dbt_artifacts, base_artifacts, "--format", "json"))
+    assert result.exit_code == 0, result.output
+    report = _json_report(result)
+    assert report["changeset"]["total_changes"] > 0
+    assert report["scope_git"]["applied"] is False
+    assert "models/marts/py_scores.py" in report["scope_git"]["reason"]
+
+
+def test_scope_git_docs_only_diff_stays_scoped(dbt_artifacts, base_artifacts, monkeypatch):
+    # schema.yml / docs edits cannot alter compiled SQL: scoping stays on and
+    # legitimately narrows the (stale-base) changeset to nothing.
+    _patch_git_diff(monkeypatch, ["models/staging/models.yml", "README.md"])
+    result = _run_impact(_scope_git_args(dbt_artifacts, base_artifacts, "--format", "json"))
+    assert result.exit_code == 0, result.output
+    report = _json_report(result)
+    assert report["changeset"]["total_changes"] == 0
+    assert report["scope_git"]["applied"] is True
 
 
 def test_ci_no_change_passes_gate(dbt_artifacts, no_gh_env):

@@ -73,6 +73,45 @@ class SemanticChangeKind(str, Enum):
         return self is not SemanticChangeKind.EQUIVALENT
 
 
+class ArtifactStamp(BaseModel):
+    """Identity stamp of one loaded dbt artifact, from its ``metadata`` block.
+
+    ``generated_at`` / ``invocation_id`` are what dbt writes on every run; either may be
+    missing on hand-crafted or truncated artifacts, in which case no identity claim is made.
+    """
+
+    generated_at: Optional[str] = None
+    invocation_id: Optional[str] = None
+
+
+class ArtifactStamps(BaseModel):
+    """The catalog + manifest identity stamps of one side of a two-manifest diff."""
+
+    catalog: ArtifactStamp = Field(default_factory=ArtifactStamp)
+    manifest: ArtifactStamp = Field(default_factory=ArtifactStamp)
+
+
+class StructuralDiffStatus(BaseModel):
+    """Honesty stamp for the structural (added/removed/type_changed) column diff.
+
+    Emitted ONLY when degraded — e.g. one prod ``catalog.json`` mounted on both sides
+    (identical catalogs can never show a removed/retyped column) or a head catalog that
+    predates the head manifest (stale column truth). Purely advisory: it changes no exit
+    code and no verdict, it makes the blind spot visible in the report instead of letting
+    ``provable_break_count == 0`` read as proof.
+    """
+
+    status: Literal["degraded"]
+    reason: str
+
+
+# Outcome of the model-level compiled-SQL diff. ``indeterminate`` means the diff was
+# IMPOSSIBLE (compiled SQL unavailable on a side for a model node): "no logic change" is
+# unprovable, so the changeset emits fail-safe changes carrying this marker instead of
+# silently reporting safe. Rides on ``ColumnChange.logic_diff_status`` / the JSON change dicts.
+LogicDiffStatus = Literal["changed", "unchanged", "indeterminate"]
+
+
 class SemanticDiff(BaseModel):
     """Result of comparing two SQL expressions for semantic equality.
 
@@ -317,6 +356,13 @@ class ImpactConfidence(BaseModel):
     # COMPLETE, uncapped machine list — len(opaque_models) == opaque always in machine output.
     opaque: int = 0
     opaque_models: List[str] = Field(default_factory=list)
+    # Changed models whose model-level logic diff was IMPOSSIBLE (compiled SQL unavailable on a
+    # side — see ``LogicDiffStatus``). "No logic change" was unprovable for them, so their
+    # presence drops ``level`` to ``partial`` (which widens the rebuild selection): nothing
+    # downstream of an un-diffable model may be proven safe to skip. COMPLETE, uncapped machine
+    # list — len(indeterminate_logic_models) == indeterminate_logic always in machine output.
+    indeterminate_logic: int = 0
+    indeterminate_logic_models: List[str] = Field(default_factory=list)
     # Display-only truncation signals: False in machine output (lists are complete),
     # set True only by a display layer when it elided names from the rendered list.
     no_column_info_truncated: bool = False
@@ -838,6 +884,13 @@ class PolicyDefaults(BaseModel):
     on_error: MissingMetaPolicy = MissingMetaPolicy.FAIL_CLOSED
     on_meaning_changed: Optional[GateDecision] = None
     on_indeterminate: Optional[GateDecision] = None
+    # Opt-in (default OFF, byte-identical behavior when unset): makes ``fail_closed`` apply to
+    # NON-BLOCKING rules too. A warn rule whose predicate stays UNKNOWN under a fail_closed knob
+    # then FIRES at its declared severity (a normal warn hit marked ``fired_on_unknown``) instead
+    # of being suppressed. It never escalates severity — a warn rule can only ever contribute
+    # WARN — so ``--fail-on policy`` exit behavior is untouched. With the knob off, the
+    # suppression is still surfaced as ``PolicyVerdict.unproven`` telemetry (issue #124).
+    warn_rules_fire_on_unknown: bool = False
 
 
 class Policy(BaseModel):
@@ -885,6 +938,27 @@ class RuleHit(BaseModel):
     unknown_cause: Optional[Literal["missing", "error"]] = None
 
 
+class UnprovenPolicyHit(BaseModel):
+    """A suppressed-unknown firing: a NON-BLOCKING rule whose predicate stayed UNKNOWN under a
+    ``fail_closed`` knob (issue #124).
+
+    Under fail_closed only a *blocking* rule fires on UNKNOWN; a warn rule is suppressed so the
+    engine never manufactures a spurious warning. But silence would make an all-warn pilot policy
+    systematically understate what block mode will do — so each suppression is recorded here:
+    the rule, the subject change, the UNKNOWN cause (missing meta vs evaluation error), and the
+    leaf condition(s) that resolved UNKNOWN. Report-only telemetry: it contributes nothing to
+    the gate decision, hits, or exit code.
+    """
+
+    rule_id: str
+    change_model: Optional[str] = None
+    change_column: Optional[str] = None
+    unknown_cause: Literal["missing", "error"]
+    # The leaf conditions that resolved UNKNOWN while this rule was evaluated, as compact
+    # ``axis.key`` labels (e.g. ``meta.pii``, ``reach.exposure``) — the "what to tag" pointer.
+    unknown_leaves: List[str] = Field(default_factory=list)
+
+
 class PolicyVerdict(BaseModel):
     """The engine's output: a gate decision + accumulated build/test sets + notifications."""
 
@@ -898,6 +972,11 @@ class PolicyVerdict(BaseModel):
     # Honesty counters for fail-safe explainability (additive; see policy.py §7).
     unresolved_reach_count: int = 0
     skipped_missing_meta: int = 0
+    # Suppressed-unknown telemetry (additive; issue #124): warn-rule conditions that a
+    # fail_closed knob WOULD have fired were the rule blocking. ``unproven_count`` mirrors
+    # ``len(unproven)`` for one-glance consumers of the JSON verdict.
+    unproven: List[UnprovenPolicyHit] = Field(default_factory=list)
+    unproven_count: int = 0
 
     def blocks(self) -> bool:
         """True when the gate decision is ``BLOCK``."""
@@ -991,6 +1070,40 @@ class BacktestPointResult(BaseModel):
     blast_radius: int = 0
     fired: List[BacktestFiredHit] = Field(default_factory=list)
     sample_reach: List[str] = Field(default_factory=list)
+    # --- selection measurement (pure observation of the per-point Selection block) ---
+    # ``None`` for points replayed without a selection (a failed replay, or a service that
+    # produced no selection block); such points are excluded from the aggregate stats.
+    selection_widened: Optional[bool] = None  # Selection.widened_to_all_reachable
+    skippable_models_count: Optional[int] = None  # len(Selection.skippable_models)
+    # ResolutionSummary.rebuild_forced_by_nonresolution for this point (rebuilds forced
+    # because parrant could not resolve the model, not by a proven reaching change).
+    rebuild_forced_by_nonresolution: Optional[int] = None
+    # ResolutionSummary.top_reasons flattened to {reason -> count} for cross-point aggregation.
+    resolution_reasons: Dict[str, int] = Field(default_factory=dict)
+
+
+class BacktestSelectionStats(BaseModel):
+    """Aggregate selection widen-rate statistics across the replayed range (measurement only).
+
+    Answers "how often does the rebuild selection give up and widen to every reachable model,
+    and why?" over the whole backtest — pure aggregation of the per-point ``Selection`` /
+    ``ResolutionSummary`` facts; it changes no selection or gating behavior.
+    """
+
+    # Points that carried a selection block (the denominator of every rate below).
+    points_with_selection: int = 0
+    # Points where ``widened_to_all_reachable`` was true — the safe over-build fired.
+    widened_points: int = 0
+    # ``widened_points / points_with_selection`` as a percentage (1 decimal; 0.0 when empty).
+    widen_rate_pct: float = 0.0
+    # Median ``len(skippable_models)`` across points with a selection (0.0 when empty).
+    median_skippable_models: float = 0.0
+    # Sum of per-point ``rebuild_forced_by_nonresolution`` — total rebuilds forced because a
+    # model could not be resolved rather than by a proven reaching change.
+    rebuild_forced_by_nonresolution_total: int = 0
+    # Cross-point roll-up of the per-point resolution reasons, ranked by frequency: the
+    # widening/forcing-reason backlog (which resolution gaps drive the widen rate).
+    top_reasons: List[ResolutionReasonCount] = Field(default_factory=list)
 
 
 class BacktestReport(BaseModel):
@@ -1015,6 +1128,9 @@ class BacktestReport(BaseModel):
     fidelity_note: str = ""
     warnings: List[str] = Field(default_factory=list)
     baseline_delta: Optional[Dict[str, Any]] = None
+    # Aggregate selection widen-rate statistics (measurement only). ``None`` when no replayed
+    # point carried a selection block, so an absent surface is never mistaken for a zero rate.
+    selection_stats: Optional[BacktestSelectionStats] = None
 
 
 # ===========================================================================
@@ -1089,3 +1205,22 @@ class PolicyInitScan(BaseModel):
         """True when at least one model declares a ``config.grants.select`` — the signal that
         the config-axis (PII over-grant) template is worth offering."""
         return self.models_with_grants > 0
+
+
+class GitScopeStatus(BaseModel):
+    """Outcome of ``--scope-git``: was the git intersection applied, or disabled fail-safe?
+
+    Scoping intersects the two-manifest changeset with the models the branch touched,
+    mapped from the git diff. That mapping is only sound when EVERY logic-bearing changed
+    file resolves to specific models. A file that can rewrite compiled SQL project-wide
+    but cannot be pinned to models (an unmapped macro/``.sql``, a ``.py`` model absent
+    from the manifest, ``dbt_project.yml`` vars, ``packages.yml``, an unmapped seed
+    ``.csv``) makes narrowing unprovable — scoping is then DISABLED for the run and the
+    full changeset kept (fail-safe), with the reason surfaced here and in the report.
+    """
+
+    base: str
+    applied: bool
+    changed_models: List[str] = Field(default_factory=list)
+    unmappable_files: List[str] = Field(default_factory=list)
+    reason: Optional[str] = None

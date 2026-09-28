@@ -1304,3 +1304,169 @@ def test_ineffective_policy_overrides_surfaces_allow_change_on_break():
     ineff = ineffective_policy_overrides(verdict, [change], breaks=[_break()])
     assert len(ineff) == 1
     assert "allow-break" in ineff[0]["hint"]
+
+
+# --- suppressed-unknown telemetry + warn-on-unknown knob (issue #124) ---------
+
+
+def _warn_pii_policy(defaults=None):
+    """A warn-only `meta.pii eq true` rule — UNKNOWN on any untagged column (the #124 repro)."""
+    doc = {
+        "version": 1,
+        "defaults": defaults or {"on_missing_meta": "fail_closed"},
+        "rules": [
+            {
+                "id": "warn-pii",
+                "predicate": {"meta": {"key": "pii", "op": "eq", "value": True}},
+                "action": [{"type": "warn"}],
+            }
+        ],
+    }
+    return parse_policy(doc)
+
+
+def test_warn_rule_unknown_under_fail_closed_surfaces_unproven():
+    """Issue #124: a warn rule whose predicate stays UNKNOWN under fail_closed is suppressed
+    (no spurious warn) but the suppression MUST surface as an unproven record — otherwise an
+    all-warn pilot policy systematically understates what block mode will do."""
+    registry = FakeRegistry(model_meta={"m": {}})  # no `pii` meta anywhere
+    impact = _impact(_resolved("m", "c"))
+    verdict = _engine(_warn_pii_policy(), registry, impact).evaluate(
+        [_change("m", "c", semantic=SemanticChangeKind.MEANING_CHANGED)]
+    )
+    # decision surface unchanged: still ALLOW, still zero fired rules.
+    assert verdict.decision is GateDecision.ALLOW
+    assert verdict.fired_rules == 0
+    assert verdict.hits == []
+    # ...but the suppressed firing is now visible.
+    assert verdict.unproven_count == 1
+    (record,) = verdict.unproven
+    assert record.rule_id == "warn-pii"
+    assert record.change_model == "m"
+    assert record.change_column == "c"
+    assert record.unknown_cause == "missing"
+    assert "meta.pii" in record.unknown_leaves
+
+
+def test_unproven_error_cause_from_type_mismatch():
+    """A warn rule suppressed by an UNKNOWN_ERROR under `on_error: fail_closed` records the
+    error cause, mirroring the missing/error split of the fired_on_unknown marker."""
+    policy = parse_policy(
+        {
+            "version": 1,
+            "defaults": {"on_missing_meta": "fail_open", "on_error": "fail_closed"},
+            "rules": [
+                {
+                    "id": "roles-subset",
+                    "predicate": {"meta": {"key": "roles", "op": "subset_of", "value": ["A"]}},
+                    "action": [{"type": "warn"}],
+                }
+            ],
+        }
+    )
+    registry = FakeRegistry(model_meta={"m": {"roles": "ADMIN"}})  # scalar -> type mismatch
+    verdict = _engine(policy, registry, _impact(_resolved("m", "c"))).evaluate(
+        [_change("m", "c", semantic=SemanticChangeKind.MEANING_CHANGED)]
+    )
+    assert verdict.decision is GateDecision.ALLOW
+    assert verdict.unproven_count == 1
+    assert verdict.unproven[0].unknown_cause == "error"
+    assert "meta.roles" in verdict.unproven[0].unknown_leaves
+
+
+def test_unproven_not_recorded_under_fail_open_or_skip():
+    """Only a suppressed *fail_closed* firing is unproven: fail_open / skip resolve the UNKNOWN
+    by design and keep their existing surfaces (nothing / skipped_missing_meta)."""
+    registry = FakeRegistry(model_meta={"m": {}})
+    impact = _impact(_resolved("m", "c"))
+    change = _change("m", "c", semantic=SemanticChangeKind.MEANING_CHANGED)
+
+    open_verdict = _engine(
+        _warn_pii_policy({"on_missing_meta": "fail_open"}), registry, impact
+    ).evaluate([change])
+    assert open_verdict.unproven_count == 0
+    assert open_verdict.unproven == []
+
+    skip_verdict = _engine(
+        _warn_pii_policy({"on_missing_meta": "skip"}), registry, impact
+    ).evaluate([change])
+    assert skip_verdict.unproven_count == 0
+    assert skip_verdict.skipped_missing_meta == 1
+
+
+def test_unproven_not_recorded_for_blocking_rule():
+    """A blocking rule under fail_closed FIRES on UNKNOWN (existing behavior) — it is a hit
+    marked fired_on_unknown, never an unproven record (no double-count)."""
+    verdict = _fire(_one_meta_rule("pii", "eq", True), {})
+    assert verdict.blocks()
+    assert verdict.unproven_count == 0
+    assert verdict.unproven == []
+
+
+def test_unproven_not_recorded_on_proven_false():
+    """A predicate that resolves to a proven FALSE is not unproven — nothing was suppressed."""
+    registry = FakeRegistry(column_meta={("m", "c"): {"pii": False}})
+    verdict = _engine(_warn_pii_policy(), registry, _impact(_resolved("m", "c"))).evaluate(
+        [_change("m", "c", semantic=SemanticChangeKind.MEANING_CHANGED)]
+    )
+    assert verdict.unproven_count == 0
+    assert verdict.unproven == []
+
+
+def test_warn_rules_fire_on_unknown_knob_fires_warn_hit():
+    """The opt-in knob (defaults.warn_rules_fire_on_unknown) makes fail_closed apply to
+    non-blocking rules too: the warn rule fires on UNKNOWN as a normal warn hit marked
+    fired_on_unknown, and nothing lands in unproven."""
+    policy = _warn_pii_policy(
+        {"on_missing_meta": "fail_closed", "warn_rules_fire_on_unknown": True}
+    )
+    registry = FakeRegistry(model_meta={"m": {}})
+    verdict = _engine(policy, registry, _impact(_resolved("m", "c"))).evaluate(
+        [_change("m", "c", semantic=SemanticChangeKind.MEANING_CHANGED)]
+    )
+    assert verdict.decision is GateDecision.WARN
+    assert verdict.fired_rules == 1
+    (hit,) = verdict.hits
+    assert hit.rule_id == "warn-pii"
+    assert hit.decision is GateDecision.WARN
+    assert hit.fired_on_unknown is True
+    assert hit.unknown_cause == "missing"
+    assert verdict.unproven_count == 0
+    assert verdict.unproven == []
+
+
+def test_warn_rules_fire_on_unknown_knob_never_escalates_to_block():
+    """The knob only fires the rule at its declared severity — the gate decision can become
+    WARN, never BLOCK, so `--fail-on policy` exit behavior is untouched."""
+    policy = _warn_pii_policy(
+        {"on_missing_meta": "fail_closed", "warn_rules_fire_on_unknown": True}
+    )
+    registry = FakeRegistry(model_meta={"m": {}})
+    verdict = _engine(policy, registry, _impact(_resolved("m", "c"))).evaluate(
+        [_change("m", "c", semantic=SemanticChangeKind.MEANING_CHANGED)]
+    )
+    assert not verdict.blocks()
+
+
+def test_knob_off_verdict_identical_except_unproven():
+    """Default-off regression lock: apart from the additive unproven telemetry, the verdict is
+    identical to the pre-#124 one (decision, hits, counters)."""
+    registry = FakeRegistry(model_meta={"m": {}})
+    impact = _impact(_resolved("m", "c"))
+    verdict = _engine(_warn_pii_policy(), registry, impact).evaluate(
+        [_change("m", "c", semantic=SemanticChangeKind.MEANING_CHANGED)]
+    )
+    dumped = verdict.model_dump(mode="json")
+    dumped.pop("unproven", None)
+    dumped.pop("unproven_count", None)
+    assert dumped == {
+        "decision": "allow",
+        "hits": [],
+        "build_set": [],
+        "test_set": [],
+        "notifications": [],
+        "evaluated_rules": 1,
+        "fired_rules": 0,
+        "unresolved_reach_count": 0,
+        "skipped_missing_meta": 0,
+    }

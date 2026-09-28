@@ -131,3 +131,129 @@ def test_fail_on_policy_no_change_exits_zero(dbt_artifacts):
         ]
     )
     assert result.returncode == 0, f"stdout={result.stdout}\nstderr={result.stderr}"
+
+
+_WARN_PII_POLICY = str(REPO_ROOT / "tests" / "resources" / "policies" / "warn_pii_fail_closed.yml")
+_WARN_PII_KNOB_POLICY = str(
+    REPO_ROOT / "tests" / "resources" / "policies" / "warn_pii_fire_on_unknown.yml"
+)
+
+
+def test_warn_policy_unknown_exit_code_invariant(dbt_artifacts, mutated_base):
+    """Issue #124 exit-code invariance: a warn-only fail_closed policy whose rule stays UNKNOWN
+    exits 0 under `--fail-on policy` — exactly as before the unproven telemetry (a warn-only
+    policy can never block; the new surface is report-only)."""
+    result = _run(
+        [
+            "--manifest",
+            str(dbt_artifacts["manifest_path"]),
+            "--catalog",
+            str(dbt_artifacts["catalog_path"]),
+            "--base-manifest",
+            mutated_base["manifest"],
+            "--base-catalog",
+            mutated_base["catalog"],
+            "--ci",
+            "--fail-on",
+            "policy",
+            "--policy",
+            _WARN_PII_POLICY,
+        ]
+    )
+    assert result.returncode == 0, f"stdout={result.stdout}\nstderr={result.stderr}"
+
+
+def test_warn_policy_unknown_surfaces_unproven_in_report(dbt_artifacts, mutated_base):
+    """The suppressed warn-rule UNKNOWN is no longer silent: the Markdown report (the same body
+    posted as the sticky PR comment) carries the honest unproven line, and the JSON verdict
+    carries the machine-readable record."""
+    md_result = _run(
+        [
+            "--manifest",
+            str(dbt_artifacts["manifest_path"]),
+            "--catalog",
+            str(dbt_artifacts["catalog_path"]),
+            "--base-manifest",
+            mutated_base["manifest"],
+            "--base-catalog",
+            mutated_base["catalog"],
+            "--policy",
+            _WARN_PII_POLICY,
+        ]
+    )
+    assert md_result.returncode == 0, f"stdout={md_result.stdout}\nstderr={md_result.stderr}"
+    md = md_result.stdout
+    assert "unproven warn-rule condition" in md
+    assert "warn-pii-guard" in md
+    # The verdict itself stays ALLOW: nothing fired, nothing blocked.
+    assert "Policy verdict — ALLOW" in md
+
+    json_result = _run(
+        [
+            "--manifest",
+            str(dbt_artifacts["manifest_path"]),
+            "--catalog",
+            str(dbt_artifacts["catalog_path"]),
+            "--base-manifest",
+            mutated_base["manifest"],
+            "--base-catalog",
+            mutated_base["catalog"],
+            "--policy",
+            _WARN_PII_POLICY,
+            "--format",
+            "json",
+        ]
+    )
+    assert json_result.returncode == 0, f"stderr={json_result.stderr}"
+    verdict = json.loads(json_result.stdout)["policy_verdict"]
+    assert verdict["decision"] == "allow"
+    assert verdict["unproven_count"] >= 1
+    assert any(rec["rule_id"] == "warn-pii-guard" for rec in verdict["unproven"])
+
+
+def test_warn_policy_knob_on_fires_warn_and_still_exits_zero(dbt_artifacts, mutated_base):
+    """With `warn_rules_fire_on_unknown: true` the warn rule FIRES on the UNKNOWN leaf as a
+    normal warn hit marked fired_on_unknown — and the gate still exits 0 under
+    `--fail-on policy` (warn is not block)."""
+    json_result = _run(
+        [
+            "--manifest",
+            str(dbt_artifacts["manifest_path"]),
+            "--catalog",
+            str(dbt_artifacts["catalog_path"]),
+            "--base-manifest",
+            mutated_base["manifest"],
+            "--base-catalog",
+            mutated_base["catalog"],
+            "--policy",
+            _WARN_PII_KNOB_POLICY,
+            "--format",
+            "json",
+        ]
+    )
+    assert json_result.returncode == 0, f"stderr={json_result.stderr}"
+    verdict = json.loads(json_result.stdout)["policy_verdict"]
+    assert verdict["decision"] == "warn"
+    hit = next(h for h in verdict["hits"] if h["rule_id"] == "warn-pii-guard")
+    assert hit["fired_on_unknown"] is True
+    assert hit["unknown_cause"] == "missing"
+    assert verdict["unproven_count"] == 0
+
+    gate_result = _run(
+        [
+            "--manifest",
+            str(dbt_artifacts["manifest_path"]),
+            "--catalog",
+            str(dbt_artifacts["catalog_path"]),
+            "--base-manifest",
+            mutated_base["manifest"],
+            "--base-catalog",
+            mutated_base["catalog"],
+            "--ci",
+            "--fail-on",
+            "policy",
+            "--policy",
+            _WARN_PII_KNOB_POLICY,
+        ]
+    )
+    assert gate_result.returncode == 0, f"stdout={gate_result.stdout}\nstderr={gate_result.stderr}"

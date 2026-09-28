@@ -16,9 +16,10 @@ from parrant.lineage.changeset import (
     ColumnChange,
     build_changeset_report,
     build_git_changeset,
+    detect_structural_degradation,
     scope_changes_to_models,
 )
-from parrant.models.schema import SemanticChangeKind
+from parrant.models.schema import ArtifactStamp, ArtifactStamps, SemanticChangeKind
 from parrant.lineage.display.markdown import render_changeset_markdown
 from parrant.lineage.service import LineageService
 
@@ -34,6 +35,9 @@ class _Col:
 @dataclass
 class _Model:
     columns: Dict[str, _Col]
+    # Optional so existing stubs stay minimal; the missing-compiled-SQL indeterminate
+    # pathway only applies to real model nodes, which always carry a resource_type.
+    resource_type: Optional[str] = None
 
 
 @dataclass
@@ -182,6 +186,108 @@ def test_builder_ignores_cosmetic_sql_changes():
     assert ChangesetBuilder(base, head).build() == []
 
 
+def test_builder_detects_change_next_to_dash_comment_inside_string_literal():
+    # The logic gate must be string-literal-aware: a `--` INSIDE a quoted string is data,
+    # not a comment. A naive regex comment-strip removes everything after it — including
+    # the real `* 1` -> `* 100` change on the same line — and silently reports SAFE.
+    base = _FakeRegistry(
+        {"m": _Model({"env": _Col("text"), "amt": _Col("int")})},
+        compiled={"m": "select 'ref -- prod' as env, amount * 1 as amt from t"},
+    )
+    head = _FakeRegistry(
+        {"m": _Model({"env": _Col("text"), "amt": _Col("int")})},
+        compiled={"m": "select 'ref -- prod' as env, amount * 100 as amt from t"},
+    )
+    changes = ChangesetBuilder(base, head).build()
+    assert changes, "a real change hidden behind a '--' inside a string literal must be detected"
+    assert {c.kind for c in changes} == {ChangeKind.LOGIC_CHANGED}
+
+
+def test_builder_detects_change_between_block_comment_markers_inside_string_literals():
+    # Same soundness hole with `/* */`: markers living INSIDE two string literals make a
+    # naive regex strip swallow every real token between them (here `1 as n` -> `2 as n`).
+    base = _FakeRegistry(
+        {"m": _Model({"a": _Col("text"), "n": _Col("int"), "b": _Col("text")})},
+        compiled={"m": "select 'open /*' as a, 1 as n, '*/ close' as b from t"},
+    )
+    head = _FakeRegistry(
+        {"m": _Model({"a": _Col("text"), "n": _Col("int"), "b": _Col("text")})},
+        compiled={"m": "select 'open /*' as a, 2 as n, '*/ close' as b from t"},
+    )
+    changes = ChangesetBuilder(base, head).build()
+    assert changes, "a real change between '/*' and '*/' string contents must be detected"
+    assert {c.kind for c in changes} == {ChangeKind.LOGIC_CHANGED}
+
+
+def test_builder_comment_only_edit_is_not_a_logic_change():
+    base = _FakeRegistry(
+        {"m": _Model({"a": _Col("int")})},
+        compiled={"m": "select 1 as a -- old note\n/* block v1 */ from t"},
+    )
+    head = _FakeRegistry(
+        {"m": _Model({"a": _Col("int")})},
+        compiled={"m": "select 1 as a -- new note\n/* block v2 */ from t"},
+    )
+    assert ChangesetBuilder(base, head).build() == []
+
+
+def test_builder_whitespace_only_edit_is_not_a_logic_change():
+    base = _FakeRegistry(
+        {"m": _Model({"a": _Col("int")})},
+        compiled={"m": "select 1 as a from t"},
+    )
+    head = _FakeRegistry(
+        {"m": _Model({"a": _Col("int")})},
+        compiled={"m": "select   1 as a\n\tfrom t"},
+    )
+    assert ChangesetBuilder(base, head).build() == []
+
+
+def test_builder_missing_head_sql_on_model_is_indeterminate_not_silent_safe():
+    # A MODEL whose compiled SQL is unavailable on the head side cannot be proven
+    # unchanged. Silently returning "no logic change" is a false SAFE: the change is
+    # invisible AND the model would not even rebuild itself. It must surface as an
+    # explicit indeterminate logic change on every head column.
+    base = _FakeRegistry(
+        {"m": _Model({"a": _Col("int"), "b": _Col("text")}, resource_type="model")},
+        compiled={"m": "select 1 as a, 'x' as b"},
+    )
+    head = _FakeRegistry(
+        {"m": _Model({"a": _Col("int"), "b": _Col("text")}, resource_type="model")},
+        compiled={},  # head compiled SQL unavailable
+    )
+    changes = ChangesetBuilder(base, head).build()
+    assert {c.column for c in changes} == {"a", "b"}
+    for change in changes:
+        assert change.kind == ChangeKind.LOGIC_CHANGED
+        assert change.semantic == SemanticChangeKind.INDETERMINATE
+        assert change.logic_diff_status == "indeterminate"
+        assert change.reason
+
+
+def test_builder_missing_base_sql_on_model_is_indeterminate_not_silent_safe():
+    base = _FakeRegistry(
+        {"m": _Model({"a": _Col("int")}, resource_type="model")},
+        compiled={},  # base compiled SQL unavailable
+    )
+    head = _FakeRegistry(
+        {"m": _Model({"a": _Col("int")}, resource_type="model")},
+        compiled={"m": "select 1 as a"},
+    )
+    changes = ChangesetBuilder(base, head).build()
+    assert [c.logic_diff_status for c in changes] == ["indeterminate"]
+    assert changes[0].to_dict()["logic_diff_status"] == "indeterminate"
+
+
+def test_builder_missing_sql_on_non_model_nodes_stays_silent():
+    # Sources / seeds / snapshots legitimately have no compiled logic to diff — missing
+    # SQL there is NOT indeterminate.
+    for resource_type in ("source", "seed", "snapshot"):
+        base = _FakeRegistry({"n": _Model({"a": _Col("int")}, resource_type=resource_type)})
+        head = _FakeRegistry({"n": _Model({"a": _Col("int")}, resource_type=resource_type)})
+        assert ChangesetBuilder(base, head).build() == [], resource_type
+
+
 def test_builder_logic_change_is_per_column_when_lineage_is_available():
     # base: a, b, c are all plain pass-throughs of an upstream column.
     base = _FakeRegistry(
@@ -307,6 +413,88 @@ def test_structural_diff_available_requires_catalog_on_both_sides():
     no_catalog = _FakeRegistry({"m": _Model({"a": _Col("int")})}, catalog_backed=set())
     assert ChangesetBuilder(base, no_catalog).structural_diff_available() is False
     assert ChangesetBuilder(no_catalog, head).structural_diff_available() is False
+
+
+class _StampedRegistry(_FakeRegistry):
+    """A registry stub that also exposes artifact identity (fingerprint + stamps)."""
+
+    def __init__(
+        self,
+        fingerprint: Optional[str] = None,
+        catalog_generated_at: Optional[str] = None,
+        manifest_generated_at: Optional[str] = None,
+        catalog_invocation_id: Optional[str] = None,
+        manifest_invocation_id: Optional[str] = None,
+    ):
+        super().__init__({"m": _Model({"a": _Col("int")})})
+        self._fingerprint = fingerprint
+        self._stamps = ArtifactStamps(
+            catalog=ArtifactStamp(
+                generated_at=catalog_generated_at, invocation_id=catalog_invocation_id
+            ),
+            manifest=ArtifactStamp(
+                generated_at=manifest_generated_at, invocation_id=manifest_invocation_id
+            ),
+        )
+
+    def get_catalog_fingerprint(self) -> Optional[str]:
+        return self._fingerprint
+
+    def get_artifact_stamps(self) -> ArtifactStamps:
+        return self._stamps
+
+
+def test_detect_structural_degradation_on_identical_catalogs():
+    # ONE prod catalog mounted on both sides: removed/type_changed can never surface, so the
+    # report must carry an explicit degraded stamp instead of a confident silence.
+    base = _StampedRegistry(fingerprint="abc")
+    head = _StampedRegistry(fingerprint="abc")
+    status = detect_structural_degradation(base, head)
+    assert status is not None
+    assert status.status == "degraded"
+    assert "identical" in status.reason
+
+
+def test_detect_structural_degradation_none_on_distinct_catalogs():
+    base = _StampedRegistry(
+        fingerprint="abc",
+        catalog_generated_at="2026-01-01T00:00:10Z",
+        manifest_generated_at="2026-01-01T00:00:00Z",
+        catalog_invocation_id="inv-1",
+        manifest_invocation_id="inv-1",
+    )
+    head = _StampedRegistry(
+        fingerprint="def",
+        catalog_generated_at="2026-01-02T00:00:10Z",
+        manifest_generated_at="2026-01-02T00:00:00Z",
+        catalog_invocation_id="inv-2",
+        manifest_invocation_id="inv-2",
+    )
+    assert detect_structural_degradation(base, head) is None
+
+
+def test_detect_structural_degradation_on_stale_head_catalog():
+    # The head catalog predates the head manifest (and comes from a different dbt
+    # invocation): its column truth is stale, so structural checks are degraded.
+    base = _StampedRegistry(fingerprint="abc")
+    head = _StampedRegistry(
+        fingerprint="def",
+        catalog_generated_at="2026-01-01T00:00:00Z",
+        manifest_generated_at="2026-01-05T00:00:00Z",
+        catalog_invocation_id="inv-old",
+        manifest_invocation_id="inv-new",
+    )
+    status = detect_structural_degradation(base, head)
+    assert status is not None
+    assert status.status == "degraded"
+    assert "predates" in status.reason
+
+
+def test_detect_structural_degradation_silent_on_stub_registries():
+    # Providers that expose no artifact identity (lightweight stubs) make no claim.
+    base = _FakeRegistry({"m": _Model({"a": _Col("int")})})
+    head = _FakeRegistry({"m": _Model({"a": _Col("int")})})
+    assert detect_structural_degradation(base, head) is None
 
 
 # --- AST semantic-diff integration (Package B) -----------------------------
@@ -999,6 +1187,140 @@ def test_scope_changes_to_models_filters():
 def test_scope_changes_empty_when_no_overlap():
     changes = [ColumnChange("customers", "id", ChangeKind.LOGIC_CHANGED)]
     assert scope_changes_to_models(changes, {"orders"}) == []
+
+
+# --- git scope fail-safe -----------------------------------------------------
+#
+# --scope-git must never silently narrow the changeset when the branch touched a
+# file that can influence compiled SQL but cannot be mapped to a specific model
+# (macros, Python models, dbt_project.yml, ...). resolve_git_scope classifies the
+# FULL git diff and reports such files as `unmappable`, which the CLI uses to
+# disable scoping for the run (fail-safe: keep the full two-manifest changeset).
+
+
+def _patch_changed_files(monkeypatch, files):
+    from parrant.lineage import changeset
+
+    monkeypatch.setattr(
+        changeset,
+        "_git_changed_files",
+        lambda ref, repo_dir=None, git_head="HEAD": files,
+    )
+
+
+def test_resolve_git_scope_model_sql_maps(monkeypatch):
+    from parrant.lineage import changeset
+
+    _patch_changed_files(monkeypatch, ["models/orders.sql"])
+    scope = changeset.resolve_git_scope(_registry_with_paths(), "origin/main")
+    assert scope.models == {"orders"}
+    assert scope.unmappable == []
+
+
+def test_resolve_git_scope_macro_sql_is_unmappable(monkeypatch):
+    from parrant.lineage import changeset
+
+    _patch_changed_files(monkeypatch, ["macros/helper.sql", "models/orders.sql"])
+    scope = changeset.resolve_git_scope(_registry_with_paths(), "origin/main")
+    # The macro can rewrite any model's compiled SQL: scoping must not be trusted.
+    assert scope.unmappable == ["macros/helper.sql"]
+    assert scope.models == {"orders"}
+
+
+def test_resolve_git_scope_dbt_project_yml_is_unmappable(monkeypatch):
+    from parrant.lineage import changeset
+
+    _patch_changed_files(monkeypatch, ["dbt_project.yml"])
+    scope = changeset.resolve_git_scope(_registry_with_paths(), "origin/main")
+    assert scope.unmappable == ["dbt_project.yml"]
+
+
+def test_resolve_git_scope_packages_yml_is_unmappable(monkeypatch):
+    from parrant.lineage import changeset
+
+    _patch_changed_files(monkeypatch, ["packages.yml"])
+    scope = changeset.resolve_git_scope(_registry_with_paths(), "origin/main")
+    assert scope.unmappable == ["packages.yml"]
+
+
+def test_resolve_git_scope_unmapped_python_file_is_unmappable(monkeypatch):
+    from parrant.lineage import changeset
+
+    _patch_changed_files(monkeypatch, ["models/new_py_model.py"])
+    scope = changeset.resolve_git_scope(_registry_with_paths(), "origin/main")
+    assert scope.unmappable == ["models/new_py_model.py"]
+
+
+def test_resolve_git_scope_mapped_python_model_scopes(monkeypatch):
+    from parrant.lineage import changeset
+
+    registry = _PathRegistry(
+        {
+            "orders": _PathModel({"id": _Col("int")}, "models/orders.sql"),
+            "py_features": _PathModel({"id": _Col("int")}, "models/py_features.py"),
+        }
+    )
+    _patch_changed_files(monkeypatch, ["models/py_features.py"])
+    scope = changeset.resolve_git_scope(registry, "origin/main")
+    assert scope.models == {"py_features"}
+    assert scope.unmappable == []
+
+
+def test_resolve_git_scope_docs_only_diff_is_ignorable(monkeypatch):
+    from parrant.lineage import changeset
+
+    # Property/docs files do not alter compiled SQL: scoping stays trustworthy
+    # (and legitimately narrows the changeset to nothing).
+    _patch_changed_files(
+        monkeypatch,
+        ["models/staging/models.yml", "models/docs.md", "README.md"],
+    )
+    scope = changeset.resolve_git_scope(_registry_with_paths(), "origin/main")
+    assert scope.models == set()
+    assert scope.unmappable == []
+
+
+def test_resolve_git_scope_seed_csv_is_unmappable_when_unmapped(monkeypatch):
+    from parrant.lineage import changeset
+
+    # A seed column change can remove/retype downstream columns without any .sql
+    # edit, so an unmapped .csv must disable scoping too.
+    _patch_changed_files(monkeypatch, ["seeds/country_codes.csv"])
+    scope = changeset.resolve_git_scope(_registry_with_paths(), "origin/main")
+    assert scope.unmappable == ["seeds/country_codes.csv"]
+
+
+def test_resolve_git_scope_macro_maps_to_dependents_when_available(monkeypatch):
+    from parrant.lineage import changeset
+
+    class _MacroRegistry(_PathRegistry):
+        def get_macro_dependents(self):
+            return {"macros/helper.sql": {"orders", "customers"}}
+
+    registry = _MacroRegistry(
+        {
+            "orders": _PathModel({"id": _Col("int")}, "models/orders.sql"),
+            "customers": _PathModel({"id": _Col("int")}, "models/customers.sql"),
+        }
+    )
+    _patch_changed_files(monkeypatch, ["macros/helper.sql"])
+    scope = changeset.resolve_git_scope(registry, "origin/main")
+    # The macro is mapped to its dependent models: scoping stays on, widened to them.
+    assert scope.models == {"orders", "customers"}
+    assert scope.unmappable == []
+
+
+def test_resolve_git_scope_unknown_macro_still_unmappable(monkeypatch):
+    from parrant.lineage import changeset
+
+    class _MacroRegistry(_PathRegistry):
+        def get_macro_dependents(self):
+            return {"macros/helper.sql": {"orders"}}
+
+    registry = _MacroRegistry({"orders": _PathModel({"id": _Col("int")}, "models/orders.sql")})
+    _patch_changed_files(monkeypatch, ["macros/not_in_manifest.sql"])
+    scope = changeset.resolve_git_scope(registry, "origin/main")
+    assert scope.unmappable == ["macros/not_in_manifest.sql"]
 
 
 if __name__ == "__main__":

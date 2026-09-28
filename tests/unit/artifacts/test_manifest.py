@@ -278,6 +278,44 @@ def test_source_dependencies_without_identifier(tmp_path):
     assert "raw_customers" in upstream["customers"]
 
 
+def test_seed_dependencies(tmp_path):
+    """A model ref()ing a seed must record the upstream edge (and the reverse downstream one).
+
+    Without the ``seed`` dep prefix the edge silently vanished: a seed change's consumers were
+    invisible to reachability and therefore to the rebuild selection.
+    """
+    manifest_data = {
+        "nodes": {
+            "model.jaffle_shop.customers": {
+                "name": "customers",
+                "resource_type": "model",
+                "depends_on": {"nodes": ["seed.jaffle_shop.country_codes"]},
+            },
+            "seed.jaffle_shop.country_codes": {
+                "name": "country_codes",
+                "resource_type": "seed",
+                "depends_on": {"nodes": []},
+            },
+        },
+        "sources": {},
+    }
+
+    manifest_path = tmp_path / "manifest.json"
+    with open(manifest_path, "w") as f:
+        json.dump(manifest_data, f)
+
+    reader = ManifestReader(manifest_path)
+    reader.load()
+
+    upstream = reader.get_model_upstream()
+    assert "customers" in upstream
+    assert "country_codes" in upstream["customers"]
+
+    downstream = reader.get_model_downstream()
+    assert "country_codes" in downstream
+    assert "customers" in downstream["country_codes"]
+
+
 @pytest.fixture
 def manifest_with_uppercase_names(tmp_path: Path) -> Path:
     """Create a manifest with uppercase model names and SQL references."""
@@ -357,3 +395,78 @@ def test_manifest_normalizes_exposure_dependencies(tmp_path: Path) -> None:
     assert "dashboard" in exposure_deps
     assert "customers" in exposure_deps["dashboard"]
     assert "CUSTOMERS" not in exposure_deps["dashboard"]
+
+
+# --- macro -> dependent-model mapping (feeds the --scope-git macro ceiling) ----
+
+
+def test_macro_dependents_direct_and_transitive():
+    """A node depending on macro A, where A calls macro B, depends on BOTH files."""
+    reader = ManifestReader("some/path")
+    reader.manifest = {
+        "nodes": {
+            "model.pkg.orders": {
+                "name": "Orders",
+                "resource_type": "model",
+                "depends_on": {"nodes": [], "macros": ["macro.pkg.money"]},
+            },
+            "model.pkg.customers": {
+                "name": "customers",
+                "resource_type": "model",
+                "depends_on": {"nodes": [], "macros": []},
+            },
+            "test.pkg.some_test": {
+                "name": "some_test",
+                "resource_type": "test",
+                "depends_on": {"nodes": [], "macros": ["macro.pkg.rounding"]},
+            },
+        },
+        "macros": {
+            "macro.pkg.money": {
+                "original_file_path": "macros/money.sql",
+                "depends_on": {"macros": ["macro.pkg.rounding"]},
+            },
+            "macro.pkg.rounding": {
+                "original_file_path": "./macros/rounding.sql",
+                "depends_on": {"macros": []},
+            },
+        },
+    }
+    dependents = reader.get_macro_dependents()
+    # Direct use of money -> orders; rounding is called BY money, so a change to
+    # rounding.sql also reaches orders (transitive). Paths are normalized (no ./).
+    assert dependents["macros/money.sql"] == {"orders"}
+    assert dependents["macros/rounding.sql"] == {"orders"}
+    # The test node is not a model-like node: it never appears as a dependent.
+    assert "customers" not in dependents["macros/money.sql"]
+
+
+def test_macro_dependents_cycle_safe_and_empty():
+    reader = ManifestReader("some/path")
+    reader.manifest = {
+        "nodes": {
+            "model.pkg.m": {
+                "name": "m",
+                "resource_type": "model",
+                "depends_on": {"nodes": [], "macros": ["macro.pkg.a"]},
+            },
+        },
+        "macros": {
+            "macro.pkg.a": {
+                "original_file_path": "macros/a.sql",
+                "depends_on": {"macros": ["macro.pkg.b"]},
+            },
+            "macro.pkg.b": {
+                "original_file_path": "macros/b.sql",
+                # Cycle back to a: closure must terminate.
+                "depends_on": {"macros": ["macro.pkg.a"]},
+            },
+        },
+    }
+    dependents = reader.get_macro_dependents()
+    assert dependents["macros/a.sql"] == {"m"}
+    assert dependents["macros/b.sql"] == {"m"}
+
+    empty = ManifestReader("some/path")
+    empty.manifest = {"nodes": {}}
+    assert empty.get_macro_dependents() == {}

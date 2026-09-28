@@ -78,6 +78,8 @@ def test_json_impact_carries_confidence_block(dbt_artifacts):
         "opaque",
         "opaque_models",
         "opaque_truncated",
+        "indeterminate_logic",
+        "indeterminate_logic_models",
         "level",
     }
     # Everything reachable is in the catalog and parsed, so confidence is full even

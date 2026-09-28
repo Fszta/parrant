@@ -91,3 +91,42 @@ def test_partly_fail_safe_rule_flagged_distinctly():
     ]
     out = render_backtest_table(_report(stats))
     assert "partly fail-safe" in out
+
+
+def _selection_stats():
+    from parrant.models.schema import BacktestSelectionStats, ResolutionReasonCount
+
+    return BacktestSelectionStats(
+        points_with_selection=4,
+        widened_points=3,
+        widen_rate_pct=75.0,
+        median_skippable_models=2.0,
+        rebuild_forced_by_nonresolution_total=6,
+        top_reasons=[
+            ResolutionReasonCount(reason="missing_catalog", count=4),
+            ResolutionReasonCount(reason="python_model", count=2),
+        ],
+    )
+
+
+def test_table_renders_selection_widen_stats():
+    out = render_backtest_table(_report(_stats(), selection_stats=_selection_stats()))
+    assert "widened to all-reachable in 3/4 point(s) (75.0%)" in out
+    assert "median skippable models 2.0" in out
+    assert "rebuilds forced by non-resolution: 6" in out
+    assert "missing_catalog (4)" in out
+    assert "python_model (2)" in out
+
+
+def test_markdown_renders_selection_widen_stats():
+    out = render_backtest_markdown(_report(_stats(), selection_stats=_selection_stats()))
+    assert "widened to all-reachable in 3/4 point(s) (75.0%)" in out
+    assert "Top widening/forcing reasons: missing_catalog (4), python_model (2)" in out
+
+
+def test_absent_selection_stats_render_nothing():
+    # No point carried a selection block -> the surface is OMITTED, never a fake 0% rate.
+    table = render_backtest_table(_report(_stats()))
+    md = render_backtest_markdown(_report(_stats()))
+    assert "widened to all-reachable" not in table
+    assert "widened to all-reachable" not in md

@@ -15,6 +15,8 @@ import pytest
 
 from parrant.lineage.backtest import (
     _aggregate_rule_stats,
+    _aggregate_selection_stats,
+    _selection_facts,
     backtest_exit_code,
 )
 from parrant.lineage.changeset import (
@@ -286,3 +288,105 @@ def test_fired_hit_shape_is_typed():
     hit = BacktestFiredHit(rule_id="r", decision=GateDecision.BLOCK, fired_on_unknown=True)
     dumped = hit.model_dump(mode="json")
     assert dumped == {"rule_id": "r", "decision": "block", "fired_on_unknown": True}
+
+
+# --- selection widen-rate statistics (measurement only) -----------------------
+
+
+def _sel_point(
+    ref,
+    widened=None,
+    skippable=None,
+    forced=None,
+    reasons=None,
+):
+    return BacktestPointResult(
+        ref=ref,
+        source="s",
+        total_changes=1,
+        decision="allow",
+        selection_widened=widened,
+        skippable_models_count=skippable,
+        rebuild_forced_by_nonresolution=forced,
+        resolution_reasons=reasons or {},
+    )
+
+
+def test_selection_stats_none_when_no_point_carried_a_selection():
+    points = [_sel_point("a"), _sel_point("b")]
+    assert _aggregate_selection_stats(points) is None
+
+
+def test_selection_stats_widen_rate_median_and_forced_total():
+    points = [
+        _sel_point("a", widened=True, skippable=0, forced=2, reasons={"missing_catalog": 2}),
+        _sel_point("b", widened=False, skippable=5, forced=0),
+        _sel_point("c", widened=False, skippable=1, forced=1, reasons={"python_model": 1}),
+        # A point without a selection block (failed replay) must be EXCLUDED, not read as 0%.
+        _sel_point("d"),
+    ]
+    stats = _aggregate_selection_stats(points)
+
+    assert stats is not None
+    assert stats.points_with_selection == 3
+    assert stats.widened_points == 1
+    assert stats.widen_rate_pct == 33.3  # 1/3, one decimal
+    assert stats.median_skippable_models == 1.0  # median of [0, 5, 1]
+    assert stats.rebuild_forced_by_nonresolution_total == 3
+
+
+def test_selection_stats_reasons_summed_and_ranked():
+    points = [
+        _sel_point(
+            "a", widened=True, skippable=0, reasons={"missing_catalog": 2, "star_off_cte": 1}
+        ),
+        _sel_point(
+            "b", widened=True, skippable=0, reasons={"missing_catalog": 1, "python_model": 3}
+        ),
+    ]
+    stats = _aggregate_selection_stats(points)
+
+    assert stats is not None
+    ranked = [(entry.reason, entry.count) for entry in stats.top_reasons]
+    # Summed across points, ranked by count desc then reason asc (determinism).
+    assert ranked == [("missing_catalog", 3), ("python_model", 3), ("star_off_cte", 1)]
+
+
+def test_selection_stats_all_widened_is_100_pct():
+    points = [
+        _sel_point("a", widened=True, skippable=0),
+        _sel_point("b", widened=True, skippable=0),
+    ]
+    stats = _aggregate_selection_stats(points)
+    assert stats is not None
+    assert stats.widen_rate_pct == 100.0
+    assert stats.median_skippable_models == 0.0
+
+
+def test_selection_facts_read_from_aggregated_impact():
+    aggregated = {
+        "selection": {
+            "widened_to_all_reachable": True,
+            "skippable_models": ["a", "b"],
+        },
+        "resolution_summary": {
+            "rebuild_forced_by_nonresolution": 4,
+            "top_reasons": [
+                {"reason": "missing_catalog", "count": 3},
+                {"reason": "python_model", "count": 1},
+            ],
+        },
+    }
+    widened, skippable, forced, reasons = _selection_facts(aggregated)
+    assert widened is True
+    assert skippable == 2
+    assert forced == 4
+    assert reasons == {"missing_catalog": 3, "python_model": 1}
+
+
+def test_selection_facts_absent_selection_yields_none():
+    # A stub service without a registry emits selection=None -> the point must carry no
+    # selection facts (excluded from stats), never a fabricated "not widened".
+    assert _selection_facts({"selection": None}) == (None, None, None, {})
+    assert _selection_facts({}) == (None, None, None, {})
+    assert _selection_facts("not-a-dict") == (None, None, None, {})

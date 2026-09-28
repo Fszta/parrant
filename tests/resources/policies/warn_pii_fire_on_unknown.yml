@@ -1,0 +1,18 @@
+# Test fixture — the issue #124 opt-in knob: `warn_rules_fire_on_unknown: true` makes
+# fail_closed apply to non-blocking rules too. The same warn-only PII guard now FIRES on an
+# UNKNOWN leaf, surfacing as a normal warn hit marked `fired_on_unknown` (never a block, so
+# `--fail-on policy` exit behavior is untouched).
+version: 1
+defaults:
+  on_missing_meta: fail_closed
+  warn_rules_fire_on_unknown: true
+rules:
+  - id: warn-pii-guard
+    description: >
+      Advisory PII guard — warn-only `meta.pii eq true` under fail_closed WITH the
+      warn-on-unknown knob: fires (as warn) on any untagged column instead of staying silent.
+    scope: change
+    predicate:
+      meta: { key: pii, op: eq, value: true }
+    action:
+      - type: warn

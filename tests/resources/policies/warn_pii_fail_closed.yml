@@ -1,0 +1,20 @@
+# Test fixture — the issue #124 repro: a WARN-only pilot of the naive PII guard under
+# `on_missing_meta: fail_closed`.
+#
+# On a column with no `pii` meta key, `eq` resolves to UNKNOWN_MISSING. The rule is
+# non-blocking, so under fail_closed it is SUPPRESSED (no spurious warn) — but the suppression
+# must surface as an *unproven* record on the verdict, so an all-warn rollout policy never
+# understates what block mode will do. Exit codes are unchanged: a warn-only policy never blocks.
+version: 1
+defaults:
+  on_missing_meta: fail_closed
+rules:
+  - id: warn-pii-guard
+    description: >
+      Advisory PII guard — warn-only pilot of `meta.pii eq true` under fail_closed. UNKNOWN on
+      any untagged column; suppressed but surfaced as an unproven condition (issue #124).
+    scope: change
+    predicate:
+      meta: { key: pii, op: eq, value: true }
+    action:
+      - type: warn

@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import json
 import os
+import statistics
 import subprocess
 import sys
 from collections import defaultdict
@@ -40,9 +41,11 @@ from parrant.models.schema import (
     BacktestPointResult,
     BacktestReport,
     BacktestRuleStat,
+    BacktestSelectionStats,
     GateDecision,
     Policy,
     PolicyVerdict,
+    ResolutionReasonCount,
     SemanticChangeKind,
 )
 
@@ -148,6 +151,7 @@ def _replay_point(
         )
         for hit in verdict.hits
     ]
+    widened, skippable_count, forced, reasons = _selection_facts(aggregated)
     point = BacktestPointResult(
         ref=ref,
         source=source,
@@ -158,8 +162,82 @@ def _replay_point(
         blast_radius=blast_radius,
         fired=fired,
         sample_reach=sample_reach,
+        selection_widened=widened,
+        skippable_models_count=skippable_count,
+        rebuild_forced_by_nonresolution=forced,
+        resolution_reasons=reasons,
     )
     return point, verdict
+
+
+def _selection_facts(
+    aggregated: Any,
+) -> Tuple[Optional[bool], Optional[int], Optional[int], Dict[str, int]]:
+    """Extract the per-point selection/resolution facts for the widen-rate stats.
+
+    Pure observation of the already-computed ``selection`` / ``resolution_summary`` blocks —
+    nothing here influences selection or gating. Returns all-``None``/empty when the impact
+    carried no selection block (e.g. a stub service without a registry), so such points are
+    honestly excluded from the aggregate rather than counted as "not widened".
+    """
+    if not isinstance(aggregated, dict):
+        return None, None, None, {}
+    selection = aggregated.get("selection")
+    if not isinstance(selection, dict):
+        return None, None, None, {}
+    widened = bool(selection.get("widened_to_all_reachable", False))
+    skippable_count = len(selection.get("skippable_models") or [])
+
+    forced: Optional[int] = None
+    reasons: Dict[str, int] = {}
+    summary = aggregated.get("resolution_summary")
+    if isinstance(summary, dict):
+        forced = int(summary.get("rebuild_forced_by_nonresolution", 0))
+        for entry in summary.get("top_reasons") or []:
+            if isinstance(entry, dict) and entry.get("reason") is not None:
+                reasons[str(entry["reason"])] = int(entry.get("count", 0))
+    return widened, skippable_count, forced, reasons
+
+
+# Cap the aggregated top-reasons list so a reason-rich range stays a readable breakdown.
+_TOP_REASONS_CAP = 10
+
+
+def _aggregate_selection_stats(
+    points: List[BacktestPointResult],
+) -> Optional[BacktestSelectionStats]:
+    """Roll the per-point selection facts up into the range-wide widen-rate statistics.
+
+    Only points that actually carried a selection block participate (``selection_widened is
+    not None``); a range with none returns ``None`` so the report omits the surface instead of
+    fabricating a 0% widen rate. Median is over ``skippable_models_count``; reasons are summed
+    across points and ranked by frequency (ties broken alphabetically for determinism).
+    """
+    with_selection = [p for p in points if p.selection_widened is not None]
+    if not with_selection:
+        return None
+
+    widened_points = sum(1 for p in with_selection if p.selection_widened)
+    skippable_counts = [p.skippable_models_count or 0 for p in with_selection]
+    forced_total = sum(p.rebuild_forced_by_nonresolution or 0 for p in with_selection)
+
+    reason_totals: Dict[str, int] = defaultdict(int)
+    for point in with_selection:
+        for reason, count in point.resolution_reasons.items():
+            reason_totals[reason] += count
+    top_reasons = [
+        ResolutionReasonCount(reason=reason, count=count)
+        for reason, count in sorted(reason_totals.items(), key=lambda kv: (-kv[1], kv[0]))
+    ][:_TOP_REASONS_CAP]
+
+    return BacktestSelectionStats(
+        points_with_selection=len(with_selection),
+        widened_points=widened_points,
+        widen_rate_pct=round(100.0 * widened_points / len(with_selection), 1),
+        median_skippable_models=float(statistics.median(skippable_counts)),
+        rebuild_forced_by_nonresolution_total=forced_total,
+        top_reasons=top_reasons,
+    )
 
 
 def _aggregate_rule_stats(
@@ -460,6 +538,7 @@ def _assemble_report(
         fidelity_note=fidelity_note,
         warnings=warnings,
         baseline_delta=baseline_delta,
+        selection_stats=_aggregate_selection_stats(points),
     )
 
 
