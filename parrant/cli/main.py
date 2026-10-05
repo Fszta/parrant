@@ -12,7 +12,7 @@ from parrant.lineage.changeset import (
     OverrideResolution,
     build_changeset_report,
     build_git_changeset,
-    git_changed_models,
+    resolve_git_scope,
     scope_changes_to_models,
 )
 from parrant.lineage.display import DotDisplay, JsonDisplay, TextDisplay
@@ -27,6 +27,7 @@ from parrant.lineage.verdict import (
     decide_verdict,
     ineffective_overrides,
 )
+from parrant.models.schema import GitScopeStatus
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s - %(message)s")
 
@@ -587,6 +588,9 @@ def impact(
 
         base_service: LineageService | None = None
         changes: list[ColumnChange]
+        # Populated only under --scope-git: whether the git intersection was applied or
+        # disabled fail-safe (unmappable logic-bearing files). Rendered as report["scope_git"].
+        scope_status: GitScopeStatus | None = None
         # Whether structural checks (added/removed/type_changed) could run. They need a
         # real catalog on both sides; the two-manifest path decides this from the builder
         # below. The git-diff fallback is a separate, self-evident coarse mode, so it is
@@ -630,10 +634,31 @@ def impact(
             if scope_git:
                 # Intersect the precise two-manifest changeset with the models the
                 # branch actually touched, so a stale base artifact can't leak
-                # already-merged changes into the report.
-                scoped_models = git_changed_models(head_service.registry, scope_git)
-                changes = scope_changes_to_models(changes, scoped_models)
-                source = f"two-manifest scoped to git-diff ({scope_git})"
+                # already-merged changes into the report. FAIL-SAFE: when the diff
+                # contains a logic-bearing file that cannot be pinned to models (a
+                # macro, an unmapped Python model, dbt_project.yml vars, ...), the
+                # narrowing is unprovable — keep the FULL changeset and surface the
+                # reason, instead of silently dropping real changes into a SAFE.
+                scope = resolve_git_scope(head_service.registry, scope_git)
+                if scope.unmappable:
+                    reason = "disabled — unmappable changed files: [{}]".format(
+                        ", ".join(scope.unmappable)
+                    )
+                    click.echo(f"Warning: --scope-git {reason}", err=True)
+                    source = "two-manifest (git scoping disabled: unmappable changed files)"
+                    scope_status = GitScopeStatus(
+                        base=scope_git,
+                        applied=False,
+                        changed_models=sorted(scope.models),
+                        unmappable_files=list(scope.unmappable),
+                        reason=reason,
+                    )
+                else:
+                    changes = scope_changes_to_models(changes, scope.models)
+                    source = f"two-manifest scoped to git-diff ({scope_git})"
+                    scope_status = GitScopeStatus(
+                        base=scope_git, applied=True, changed_models=sorted(scope.models)
+                    )
         elif git_base:
             override_collector = OverrideResolution()
             changes = build_git_changeset(
@@ -680,6 +705,8 @@ def impact(
         report = build_changeset_report(source, changes, aggregated)
         report["coverage"] = head_service.get_coverage().model_dump()
         report["structural_checks_available"] = structural_checks_available
+        if scope_status is not None:
+            report["scope_git"] = scope_status.model_dump()
 
         # Provable breaks + the SAFE/REVIEW/BLOCK ruling. Base registry (when present) is the
         # reliable source of the tests that existed before the change.
@@ -913,7 +940,7 @@ def policy_test(
 
         if baseline_path:
             try:
-                with open(baseline_path, "r", encoding="utf-8") as handle:
+                with open(baseline_path, encoding="utf-8") as handle:
                     baseline = BacktestReport.model_validate_json(handle.read())
             except Exception as exc:
                 raise click.ClickException(

@@ -15,6 +15,7 @@ import logging
 import re
 import subprocess
 from dataclasses import dataclass, field
+from datetime import datetime
 from enum import Enum
 from typing import Any
 
@@ -22,15 +23,17 @@ from parrant.lineage.provider import LineageProvider
 from parrant.lineage.semantic_diff import (
     _UNPARSEABLE_PREFIX,
     canonical_key,
+    comment_free_token_signature,
     compare_expressions,
 )
 from parrant.models.schema import (
+    LogicDiffStatus,
     OverrideDirective,
     OverrideVerb,
     SemanticChangeKind,
+    StructuralDiffStatus,
 )
 from parrant.parser.sql_parser import parse_override_directives
-from parrant.parser.sql_parser_utils import strip_sql_comments
 
 logger = logging.getLogger(__name__)
 
@@ -87,6 +90,11 @@ class ColumnChange:
     # equality/hashing (``compare=False``) so it never perturbs the sort key or dedup, and so a
     # frozen ``ColumnChange`` stays hashable even though ``OverrideDirective`` (pydantic) is not.
     override: OverrideDirective | None = field(default=None, compare=False)
+    # Set to ``"indeterminate"`` when the model-level logic diff was IMPOSSIBLE (compiled SQL
+    # unavailable on a side for a model node): "no logic change" was unprovable, so the change
+    # is emitted fail-safe rather than silently dropped. ``None`` for every ordinary change.
+    # Consumed by the service to degrade confidence and widen the rebuild selection.
+    logic_diff_status: LogicDiffStatus | None = None
 
     def to_dict(self) -> dict[str, object]:
         payload: dict[str, object] = {
@@ -104,6 +112,10 @@ class ColumnChange:
                 "base": self.base_expression,
                 "head": self.head_expression,
             }
+        # Only attach ``logic_diff_status`` when set (the indeterminate missing-SQL case), so
+        # ordinary changes keep their existing JSON shape byte-for-byte.
+        if self.logic_diff_status is not None:
+            payload["logic_diff_status"] = self.logic_diff_status
         # Only attach ``override`` when one is present, so JSON stays byte-stable when absent.
         # Flows into service.by_change automatically (by_change spreads change.to_dict()).
         if self.override is not None:
@@ -115,18 +127,6 @@ class ColumnChange:
                 "scope": self.override.scope,
             }
         return payload
-
-
-def _normalize_sql(sql: str | None) -> str | None:
-    """Normalize compiled SQL so cosmetic reformatting isn't read as a logic change.
-
-    ``strip_sql_comments`` already removes comments and collapses whitespace runs,
-    which is exactly the noise we want to ignore when deciding whether the logic
-    that produces a model actually changed.
-    """
-    if sql is None:
-        return None
-    return strip_sql_comments(sql)
 
 
 def _registry_dialect(registry: object) -> str | None:
@@ -343,13 +343,21 @@ class ChangesetBuilder:
                                 )
                             )
 
+            # Logic diff: three-state, never silently safe. ``indeterminate`` (a MODEL whose
+            # compiled SQL is unavailable on a side) emits fail-safe changes below — treating
+            # it as "no change" would hide the edit AND leave the model out of the rebuild.
+            logic_status = self._logic_diff_status(model_name, head_model)
+            if logic_status == "indeterminate":
+                for change in self._indeterminate_logic_changes(model_name, head_model):
+                    record(change)
+
             # Logic change: the model's compiled SQL differs. Rather than flag EVERY output
             # column — which floods the downstream blast radius with unrelated pass-throughs
             # (editing one column must not implicate every other column of the model) — diff each output
             # column's derivation between base and head and flag ONLY the columns that actually
             # changed. Falls back to flagging all columns when neither side exposes per-column
             # lineage (nothing to diff precisely).
-            if self._logic_changed(model_name):
+            if logic_status == "changed":
                 classified = self._logic_changed_columns(base_model, head_model)
                 if not classified:
                     # The compiled SQL provably changed, yet no output column's per-column
@@ -419,12 +427,61 @@ class ChangesetBuilder:
     def _side_has_catalog(registry: LineageProvider) -> bool:
         return any(registry.is_catalog_backed(name) for name in registry.get_models())
 
-    def _logic_changed(self, model_name: str) -> bool:
-        base_sql = _normalize_sql(self._safe_compiled_sql(self.base, model_name))
-        head_sql = _normalize_sql(self._safe_compiled_sql(self.head, model_name))
+    def _logic_diff_status(self, model_name: str, head_model: Any) -> LogicDiffStatus:
+        """Three-state logic diff for a node present on both sides — never silently safe.
+
+        ``"changed"`` / ``"unchanged"`` when both sides expose compiled SQL to compare.
+        When either side's compiled SQL is unavailable the answer depends on the node kind:
+        sources / seeds / snapshots legitimately have no logic to diff (``"unchanged"``),
+        but a MODEL without compiled SQL cannot be proven unchanged — that is
+        ``"indeterminate"``, and the caller emits fail-safe changes for it. The resource
+        type is read defensively (``getattr``) so lightweight stubs without one keep the
+        historical no-op behaviour; every real registry model carries it.
+        """
+        base_sql = self._safe_compiled_sql(self.base, model_name)
+        head_sql = self._safe_compiled_sql(self.head, model_name)
         if not base_sql or not head_sql:
-            return False
-        return base_sql != head_sql
+            if getattr(head_model, "resource_type", None) == "model":
+                return "indeterminate"
+            return "unchanged"
+        if base_sql == head_sql:
+            return "unchanged"
+        # Gate on the string-literal-safe token signature, NOT a regex comment strip: the
+        # tokenizer keeps string/quoted-identifier CONTENTS intact, so a `--` or `/*` inside a
+        # quoted string is data — a regex strip would swallow the real tokens around it and
+        # silently report "no logic change" (a false SAFE). Equal signatures prove the edit is
+        # comment/whitespace-only; anything else — including a side we cannot even tokenize —
+        # is treated as changed (fail-safe; the per-column diff classifies it precisely).
+        base_sig = comment_free_token_signature(base_sql, self._dialect)
+        head_sig = comment_free_token_signature(head_sql, self._dialect)
+        if base_sig is not None and head_sig is not None:
+            return "changed" if base_sig != head_sig else "unchanged"
+        return "changed"
+
+    def _indeterminate_logic_changes(self, model_name: str, head_model: Any) -> list[ColumnChange]:
+        """Fail-safe changes for a model whose logic diff was impossible (missing SQL).
+
+        Every head output column is flagged ``LOGIC_CHANGED`` / ``INDETERMINATE`` with the
+        ``logic_diff_status`` marker so the service degrades confidence and widens the rebuild
+        selection. A column-less model (no catalog entry AND no SQL to parse) still emits one
+        ``*`` sentinel change — an unprovable model must never vanish from the report.
+        """
+        reason = (
+            f"compiled SQL for model '{model_name}' is unavailable on at least one side — "
+            "the logic diff is impossible, so 'no logic change' cannot be proven (fail-safe)"
+        )
+        columns = sorted(head_model.columns) or ["*"]
+        return [
+            ColumnChange(
+                model_name,
+                column,
+                ChangeKind.LOGIC_CHANGED,
+                semantic=SemanticChangeKind.INDETERMINATE,
+                reason=reason,
+                logic_diff_status="indeterminate",
+            )
+            for column in columns
+        ]
 
     def _logic_changed_columns(self, base_model, head_model) -> dict[str, _ColumnDiff]:
         """Which output columns changed derivation, each with a semantic classification.
@@ -596,6 +653,90 @@ class ChangesetBuilder:
             return None
 
 
+def _provider_call(provider: object, method: str) -> Any:
+    """Call a zero-arg accessor on a provider defensively (``None`` when absent/failing).
+
+    Mirrors :func:`_registry_dialect`: a real ``ModelRegistry`` answers, a lightweight test
+    stub without the accessor simply makes no claim rather than raising.
+    """
+    getter = getattr(provider, method, None)
+    if not callable(getter):
+        return None
+    try:
+        return getter()
+    except Exception:
+        return None
+
+
+def _parse_artifact_timestamp(raw: str | None) -> datetime | None:
+    """Parse a dbt ``generated_at`` ISO timestamp, ``None`` when absent/unparseable."""
+    if not raw or not isinstance(raw, str):
+        return None
+    try:
+        # dbt stamps UTC with a trailing ``Z``, which py3.10's fromisoformat rejects.
+        return datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
+def detect_structural_degradation(
+    base: LineageProvider, head: LineageProvider
+) -> StructuralDiffStatus | None:
+    """Detect a base/head catalog pair that structurally CANNOT show column changes.
+
+    Two real-deployment failure modes make the structural (added/removed/type_changed) diff
+    silently blind while ``structural_diff_available()`` still reports True:
+
+    * **Identical catalogs** — one prod ``catalog.json`` mounted on both sides. Diffing a
+      catalog against itself can never surface a removed or retyped column, so
+      ``provable_break_count`` is stuck at 0 and ``--fail-on tests`` can never fire.
+    * **Stale head catalog** — the head ``catalog.json`` predates the head manifest (and comes
+      from a different dbt invocation): its column truth describes an older build.
+
+    Returns a ``degraded`` stamp with a human-readable reason, or ``None`` when neither
+    condition is provable (providers without artifact identity — e.g. stubs — make no claim).
+    Advisory only: consumed by the report/JSON/markdown surfaces, never by exit codes.
+    """
+    base_fingerprint = _provider_call(base, "get_catalog_fingerprint")
+    head_fingerprint = _provider_call(head, "get_catalog_fingerprint")
+    if base_fingerprint is not None and base_fingerprint == head_fingerprint:
+        return StructuralDiffStatus(
+            status="degraded",
+            reason=(
+                "base and head catalog.json are identical — one catalog backs both sides, so "
+                "removed/type_changed columns can never be detected"
+            ),
+        )
+
+    stamps = _provider_call(head, "get_artifact_stamps")
+    if stamps is not None:
+        catalog_stamp = stamps.catalog
+        manifest_stamp = stamps.manifest
+        same_invocation = (
+            catalog_stamp.invocation_id is not None
+            and catalog_stamp.invocation_id == manifest_stamp.invocation_id
+        )
+        if not same_invocation:
+            catalog_ts = _parse_artifact_timestamp(catalog_stamp.generated_at)
+            manifest_ts = _parse_artifact_timestamp(manifest_stamp.generated_at)
+            try:
+                stale = (
+                    catalog_ts is not None and manifest_ts is not None and catalog_ts < manifest_ts
+                )
+            except TypeError:  # mixed aware/naive timestamps — no provable claim
+                stale = False
+            if stale:
+                return StructuralDiffStatus(
+                    status="degraded",
+                    reason=(
+                        f"head catalog.json (generated_at {catalog_stamp.generated_at}) predates "
+                        f"the head manifest ({manifest_stamp.generated_at}) — its column truth "
+                        "is stale, so removed/type_changed detection is unreliable"
+                    ),
+                )
+    return None
+
+
 def _path_to_model_map(head: LineageProvider) -> dict[str, str]:
     """Map each model's ``resource_path`` (dbt ``original_file_path``) to its name."""
     mapping: dict[str, str] = {}
@@ -763,8 +904,130 @@ def scope_changes_to_models(changes: list[ColumnChange], models: set[str]) -> li
     return [change for change in changes if change.model in models]
 
 
+# Changed files that can influence models' compiled SQL. A change to one of these that
+# cannot be pinned to specific models makes git scoping unsound (see resolve_git_scope):
+#   *.sql  — a model (mappable) OR a macro/generic test that can rewrite ANY model's SQL
+#   *.py   — a Python model (mappable when in the manifest; otherwise unknown logic)
+#   *.csv  — a seed: column changes ripple into downstream models without any .sql edit
+_LOGIC_BEARING_SUFFIXES = (".sql", ".py", ".csv")
+# Project-level files whose edits (vars, packages, profiles/targets) can change the
+# compiled SQL of arbitrarily many models and are never mappable to one model.
+_LOGIC_BEARING_BASENAMES = frozenset(
+    {
+        "dbt_project.yml",
+        "dbt_project.yaml",
+        "packages.yml",
+        "packages.yaml",
+        "package-lock.yml",
+        "dependencies.yml",
+        "profiles.yml",
+        "profiles.yaml",
+    }
+)
+
+
+@dataclass
+class GitScopeResolution:
+    """How the git diff resolved for ``--scope-git``.
+
+    ``models`` is the union of models the diff could be pinned to (model files by
+    ``resource_path``, macros by their dependent models when the backend can map them).
+    ``unmappable`` lists logic-bearing changed files that could NOT be pinned to models;
+    when non-empty, narrowing the changeset to ``models`` is unsound and the caller must
+    disable scoping for the run (fail-safe) rather than silently drop changes.
+    Docs/property-only files (schema.yml, *.md, ...) influence neither compiled SQL nor
+    the catalog, so they are ignored and never disable scoping.
+    """
+
+    models: set[str] = field(default_factory=set)
+    unmappable: list[str] = field(default_factory=list)
+
+
+def _is_logic_bearing(path: str) -> bool:
+    """Whether a changed file can influence some model's compiled SQL / columns."""
+    basename = path.rsplit("/", 1)[-1].lower()
+    return basename in _LOGIC_BEARING_BASENAMES or basename.endswith(_LOGIC_BEARING_SUFFIXES)
+
+
+def _macro_dependents_or_empty(head: LineageProvider) -> dict[str, set[str]]:
+    """Macro-file -> dependent-model map, when the backend can provide it.
+
+    Capability lookup (not part of the :class:`LineageProvider` protocol): backends that
+    cannot map macros return ``{}``, which downgrades macro changes to *unmappable* — the
+    fail-safe floor — instead of crashing or, worse, silently narrowing.
+    """
+    getter = getattr(head, "get_macro_dependents", None)
+    if not callable(getter):
+        return {}
+    try:
+        dependents = getter()
+    except Exception:  # pragma: no cover - honest degrade to the fail-safe floor
+        logger.warning("get_macro_dependents failed; macro changes treated as unmappable")
+        return {}
+    return dependents if isinstance(dependents, dict) else {}
+
+
+def resolve_git_scope(
+    head: LineageProvider,
+    git_base: str,
+    repo_dir: str | None = None,
+    git_head: str = "HEAD",
+) -> GitScopeResolution:
+    """Classify the FULL git diff (not just ``*.sql``) for ``--scope-git``.
+
+    Unlike :func:`git_changed_models` (which silently ignores files it cannot map — fine
+    for the coarse ``--git-base`` fallback where unmapped files simply add no changes),
+    scoping *subtracts* from a correct two-manifest changeset, so it must prove that every
+    logic-bearing changed file was accounted for. Each changed file is either:
+
+    * mapped to a model via its ``resource_path`` (``.sql`` and ``.py`` models, seeds), or
+    * mapped to its dependent models via the manifest macro graph (when available), or
+    * logic-bearing but unmappable -> recorded in ``unmappable`` (disables scoping), or
+    * non-logic (schema.yml/docs/README/...) -> ignored.
+    """
+    path_to_model = _path_to_model_map(head)
+    macro_dependents = _macro_dependents_or_empty(head)
+    models: set[str] = set()
+    unmappable: list[str] = []
+    for changed_file in _git_changed_files(git_base, repo_dir, git_head):
+        path = _norm_path(changed_file)
+        model = path_to_model.get(path)
+        if model:
+            models.add(model)
+            continue
+        if path in macro_dependents:
+            # Ceiling: the macro is known, so scope to every model it (transitively)
+            # feeds instead of disabling scoping outright.
+            models.update(macro_dependents[path])
+            continue
+        if _is_logic_bearing(path):
+            unmappable.append(path)
+    return GitScopeResolution(models=models, unmappable=unmappable)
+
+
 def _norm_path(path: str) -> str:
     return re.sub(r"^\./", "", path.strip()).lstrip("/")
+
+
+def _git_changed_files(git_base: str, repo_dir: str | None, git_head: str = "HEAD") -> list[str]:
+    """Every changed file between ``git_base`` and ``git_head`` (no pathspec filter).
+
+    :func:`resolve_git_scope` needs the complete diff — macros, Python models,
+    ``dbt_project.yml`` — not only the ``*.sql`` view that :func:`_git_changed_sql_files`
+    serves to the coarse git fallback and the backtest.
+    """
+    try:
+        result = subprocess.run(
+            ["git", "diff", "--name-only", f"{git_base}...{git_head}"],
+            cwd=repo_dir,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+    except (subprocess.CalledProcessError, FileNotFoundError) as exc:
+        raise RuntimeError(f"Failed to compute git diff against '{git_base}': {exc}") from exc
+
+    return [line.strip() for line in result.stdout.splitlines() if line.strip()]
 
 
 def _git_changed_sql_files(
@@ -784,6 +1047,16 @@ def _git_changed_sql_files(
     return [line.strip() for line in result.stdout.splitlines() if line.strip()]
 
 
+def _parrant_version() -> str | None:
+    """The installed parrant version, or ``None`` when metadata is unavailable."""
+    try:
+        from importlib.metadata import version
+
+        return version("parrant")
+    except Exception:
+        return None
+
+
 def build_changeset_report(
     source: str,
     changes: list[ColumnChange],
@@ -794,18 +1067,22 @@ def build_changeset_report(
     The impact keys (``summary``, ``affected_models``, ``affected_columns``,
     ``affected_exposures``) are a superset of the single-column ``impact`` block,
     so existing consumers keep working; ``changeset`` and ``by_change`` are added.
+    ``report_version`` / ``parrant_version`` identify the report shape and producer so a
+    machine consumer can pin what it parses.
     """
     by_kind: dict[str, int] = {}
     for change in changes:
         by_kind[change.kind.value] = by_kind.get(change.kind.value, 0) + 1
 
     report: dict[str, object] = {
+        "report_version": 1,
+        "parrant_version": _parrant_version(),
         "changeset": {
             "source": source,
             "total_changes": len(changes),
             "by_kind": by_kind,
             "changes": [change.to_dict() for change in changes],
-        }
+        },
     }
     report.update(aggregated)
     return report

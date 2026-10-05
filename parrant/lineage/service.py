@@ -193,10 +193,11 @@ def build_selection(
         could not fully resolve (``partial_edges`` — columns present but a phantom/unresolvable
         source edge), OR deliberately does not column-analyze (``opaque`` — unparseable SQL such
         as a semantic view) — the COMPLETE machine lists — is rebuilt;
-      - if confidence is not ``full`` OR any display list was truncated, ``skippable_models`` is
-        empty and ``rebuild_models`` widens to the whole reachable universe. A reachable
-        marker-carrying model drives ``confidence.level`` to ``partial``, so it triggers this
-        widen automatically — the safe over-build.
+      - if confidence is not ``full``, any display list was truncated, OR any change is
+        UNRESOLVED (its impact fan-out raised, so its downstream reach is unknown),
+        ``skippable_models`` is empty and ``rebuild_models`` widens to the whole reachable
+        universe. A reachable marker-carrying model drives ``confidence.level`` to ``partial``,
+        so it triggers this widen automatically — the safe over-build.
 
     ``skippable_models`` is the reachable complement and is non-empty only at full confidence
     with nothing truncated. All emitted lists are sorted for determinism.
@@ -237,8 +238,14 @@ def build_selection(
         (set(changed_models) & universe) | (breaking_reached & universe) | (unanalyzable & universe)
     )
 
+    # A change parrant could not resolve (impact fan-out raised) carries an UNKNOWN reach: its
+    # downstream cone contributed nothing to ``breaking_reached``, so leaving the fold as-is
+    # would park that cone in ``skippable_models`` — an unprovable state classifying models
+    # safe. Any unresolved change therefore forces the widen (fail-closed).
+    has_unresolved = any(entry.get("resolved", True) is False for entry in by_change)
+
     level = confidence["level"]
-    widened = level != "full" or truncated
+    widened = level != "full" or truncated or has_unresolved
     if widened:
         rebuild = set(universe)
         skippable: list[str] = []
@@ -554,7 +561,12 @@ class LineageService:
             opaque=opaque,
         )
 
-    def _impact_confidence(self, reachable: set[str], resolved_models: int) -> dict[str, Any]:
+    def _impact_confidence(
+        self,
+        reachable: set[str],
+        resolved_models: int,
+        indeterminate_logic_models: list[str] | None = None,
+    ) -> dict[str, Any]:
         """Confidence block: "full" when every reachable model was analyzable, else "partial".
 
         The honest signal is the *coverage gap* — reachable downstream models we could
@@ -576,6 +588,11 @@ class LineageService:
         partial_edges = partition.partial_edges
         opaque = partition.opaque
 
+        # Changed models whose model-level logic diff was impossible (missing compiled SQL on a
+        # side): "no logic change" was unprovable, so confidence must degrade — an unprovable
+        # state may never classify anything downstream as safe to skip.
+        indeterminate_logic = sorted(set(indeterminate_logic_models or []))
+
         unanalyzable_reachable = parse_failed | no_column_info
         # Degrade to ``partial`` when a reachable model either has no columns to inspect, carries
         # an unresolved-edge marker, OR is opaque (unparseable SQL we chose not to column-analyze,
@@ -586,7 +603,12 @@ class LineageService:
         # through it, so we widen the rebuild rather than prove anything downstream skippable. The
         # widen at ``build_selection`` fires on ``partial``.
         level: Literal["full", "partial"] = (
-            "full" if not unanalyzable_reachable and not partial_edges and not opaque else "partial"
+            "full"
+            if not unanalyzable_reachable
+            and not partial_edges
+            and not opaque
+            and not indeterminate_logic
+            else "partial"
         )
         # Machine surface carries the COMPLETE name lists (no cap) so a fail-closed
         # consumer can never miss a model we couldn't analyze/resolve; the display layer caps.
@@ -602,6 +624,8 @@ class LineageService:
             partial_edges_models=sorted(partial_edges),
             opaque=len(opaque),
             opaque_models=sorted(opaque),
+            indeterminate_logic=len(indeterminate_logic),
+            indeterminate_logic_models=indeterminate_logic,
             no_column_info_truncated=False,
             parse_failed_truncated=False,
             opaque_truncated=False,
@@ -1194,7 +1218,7 @@ class LineageService:
         """
         # Deferred import: changeset depends on the registry, not the service, so
         # importing here keeps module load order simple and avoids any cycle.
-        from parrant.lineage.changeset import ChangeKind
+        from parrant.lineage.changeset import ChangeKind, detect_structural_degradation
 
         affected_models: dict[str, dict[str, Any]] = {}
         affected_columns: dict[tuple[str, str], dict[str, Any]] = {}
@@ -1318,7 +1342,21 @@ class LineageService:
             reachable: set[str] = set()
             for change in changes:
                 reachable |= self._dag_reachable_models(change.model)
-            confidence = self._impact_confidence(reachable, len(affected_models))
+            # Models whose model-level logic diff was impossible (missing compiled SQL on a
+            # side): the marker rides on the fail-safe changes the builder emitted. Their
+            # unprovability degrades confidence to ``partial``, which widens the selection.
+            indeterminate_logic_models = sorted(
+                {
+                    change.model.lower()
+                    for change in changes
+                    if getattr(change, "logic_diff_status", None) == "indeterminate"
+                }
+            )
+            confidence = self._impact_confidence(
+                reachable,
+                len(affected_models),
+                indeterminate_logic_models=indeterminate_logic_models,
+            )
             # Policy-free rebuild selection: the edited models plus everything reached by a
             # non-additive change plus everything unanalyzable. Lowercase the edited names so
             # the universe partitions cleanly against the (lowercased) reachable set.
@@ -1332,7 +1370,7 @@ class LineageService:
                 self.registry, partition, set(selection["rebuild_models"])
             )
 
-        return {
+        result: dict[str, Any] = {
             "summary": {
                 "affected_models": len(affected_models),
                 "affected_columns": len(deduped_columns),
@@ -1352,3 +1390,16 @@ class LineageService:
             "resolution": resolution,
             "resolution_summary": resolution_summary,
         }
+
+        # Honesty stamp: identical or stale base/head catalogs make the structural
+        # (added/removed/type_changed) diff structurally blind while it still nominally "ran".
+        # Stamp the report so a quiet run reads as degraded, not as proof. Advisory only —
+        # exit codes and verdicts are untouched; the key is absent when nothing is provable.
+        if base_service is not None and getattr(self, "registry", None) is not None:
+            base_registry = getattr(base_service, "registry", None)
+            if base_registry is not None:
+                degradation = detect_structural_degradation(base_registry, self.registry)
+                if degradation is not None:
+                    result["structural_diff"] = degradation.model_dump()
+                    result["summary"]["structural_diff"] = degradation.status
+        return result

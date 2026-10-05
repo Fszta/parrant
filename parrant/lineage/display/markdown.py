@@ -53,6 +53,22 @@ def _structural_checks_skipped(report: dict[str, Any]) -> bool:
     return not report.get("structural_checks_available", True)
 
 
+def _structural_diff_degraded_note(report: dict[str, Any]) -> str | None:
+    """The honesty line for a degraded structural diff (identical/stale catalogs), or None.
+
+    A degraded stamp means removed/type_changed columns may be INVISIBLE in this report even
+    though structural checks nominally ran — a quiet run must not read as proof.
+    """
+    block = report.get("structural_diff")
+    if not isinstance(block, dict) or block.get("status") != "degraded":
+        return None
+    reason = block.get("reason") or "base and head catalogs are not independent"
+    return (
+        f"⚠️ Structural diff degraded — {reason}. "
+        "Removed/retyped columns may be missing from this report."
+    )
+
+
 def _plural(n: int, word: str) -> str:
     return f"{n} {word}" + ("" if n == 1 else "s")
 
@@ -423,6 +439,44 @@ def _render_policy_section(verdict: dict[str, Any]) -> list[str]:
             "",
         ]
 
+    out += _render_unproven_conditions(verdict)
+
+    return out
+
+
+def _render_unproven_conditions(verdict: dict[str, Any]) -> list[str]:
+    """Suppressed-unknown telemetry (additive section, issue #124): warn-rule conditions that a
+    ``fail_closed`` knob would have fired were the rule blocking. An all-warn pilot policy must
+    never read clean while block mode would fail closed here — so the count line is loud and the
+    per-rule list is folded (visibility without warning-flood)."""
+    unproven = verdict.get("unproven") or []
+    if not unproven:
+        return []
+    out: list[str] = [
+        "> ⚠️ **"
+        + _plural(len(unproven), "unproven warn-rule condition")
+        + " (unknown metadata under `fail_closed`)** — suppressed, not fired; block mode "
+        "would fail closed here.",
+        "",
+        f"<details><summary>Unproven conditions ({len(unproven)})</summary>",
+        "",
+    ]
+    for record in unproven:
+        rule_id = record.get("rule_id", "?")
+        model = record.get("change_model")
+        column = record.get("change_column")
+        if model and column:
+            subject = f"`{model}.{column}`"
+        elif model:
+            subject = f"`{model}`"
+        else:
+            subject = "_changeset_"
+        cause = record.get("unknown_cause")
+        cause_txt = "evaluation error" if cause == "error" else "meta missing"
+        leaves = record.get("unknown_leaves") or []
+        leaves_txt = " — unknown: " + ", ".join(f"`{leaf}`" for leaf in leaves) if leaves else ""
+        out.append(f"- **{rule_id}** on {subject} ({cause_txt}){leaves_txt}")
+    out += ["", "</details>", ""]
     return out
 
 
@@ -454,6 +508,9 @@ def render_changeset_markdown(report: dict[str, Any], explain: bool = False) -> 
         )
         if _structural_checks_skipped(report):
             out += ["", "<sub>" + _STRUCTURAL_SKIP_NOTE + "</sub>"]
+        degraded_note = _structural_diff_degraded_note(report)
+        if degraded_note:
+            out += ["", "<sub>" + degraded_note + "</sub>"]
         out.append("")
         out.append(_CREDIT_LINE)
         out.append("")
@@ -701,6 +758,9 @@ def render_changeset_markdown(report: dict[str, Any], explain: bool = False) -> 
     footer: list[str] = []
     if _structural_checks_skipped(report):
         footer.append(_STRUCTURAL_SKIP_NOTE)
+    degraded_note = _structural_diff_degraded_note(report)
+    if degraded_note:
+        footer.append(degraded_note)
     # Break detection is a lower bound: tests it couldn't attribute to a column are never
     # checked, so a clean (SAFE/REVIEW) ruling is not proof no test breaks.
     unattributable = (report.get("verdict_coverage") or {}).get("unattributable_tests", 0)

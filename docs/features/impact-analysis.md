@@ -127,6 +127,15 @@ for the exact rule and the honesty invariants.
     additive: it never posts a comment and never changes the exit code — gating stays with
     `fail-on`.
 
+!!! warning "Tests attached to skipped models do not run"
+    The selector selects **models**, and dbt only runs the tests attached to the models it
+    selects. A test that lives on a *skipped* model but references a *rebuilt* one — most
+    commonly a `relationships` test on a skipped child pointing at a rebuilt parent — will
+    **not** run in a selective CI build, even though the rebuilt side may have just broken it.
+    If such cross-model tests matter to your gate, widen the selection (e.g.
+    `dbt build --select "$SELECTOR" --indirect-selection=buildable`, or append `+1` to the
+    selector), or run a full `dbt test` on a schedule to catch what the selective build skipped.
+
 ## Use Cases
 
 **Before modifying a column:**

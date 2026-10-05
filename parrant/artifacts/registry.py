@@ -1,3 +1,5 @@
+import hashlib
+import json
 import logging
 from dataclasses import dataclass, field
 from typing import Any
@@ -10,6 +12,8 @@ from parrant.artifacts.exceptions import (
 )
 from parrant.artifacts.manifest import ManifestReader
 from parrant.models.schema import (
+    ArtifactStamp,
+    ArtifactStamps,
     Column,
     ColumnLineage,
     Coverage,
@@ -97,6 +101,8 @@ class ModelRegistry:
         # attached to it AND relationships tests referencing it. Column-level recovery can
         # miss a model's tested columns, but a wholly-removed model breaks all of its tests.
         self._model_tests: dict[str, list[TestNode]] = {}
+        # Lazily-built macro file -> dependent model-like nodes (see get_macro_dependents).
+        self._macro_dependents: dict[str, set[str]] | None = None
 
     @property
     def is_loaded(self) -> bool:
@@ -343,6 +349,19 @@ class ModelRegistry:
         Returns an empty list for an unknown (model, column) pair or one with no tests.
         """
         return list(self._column_tests.get((model.lower(), column.lower()), []))
+
+    def get_macro_dependents(self) -> dict[str, set[str]]:
+        """Macro file path -> model-like nodes whose compiled SQL that file can affect.
+
+        Capability method consumed by the ``--scope-git`` fail-safe (looked up via
+        ``getattr``, not part of the provider protocols): a changed macro file scopes to
+        exactly its (transitive) dependents instead of disabling scoping. Delegates to the
+        manifest's macro graph; cached after the first call (the manifest is immutable
+        post-load).
+        """
+        if self._macro_dependents is None:
+            self._macro_dependents = self._manifest_reader.get_macro_dependents()
+        return self._macro_dependents
 
     def get_tests_referencing(self, model: str, column: str) -> list[TestNode]:
         """Return relationships tests whose *referenced* (parent) side is ``model.column``.
@@ -761,6 +780,39 @@ class ModelRegistry:
         """
         return self._dialect
 
+    def get_artifact_stamps(self) -> ArtifactStamps:
+        """Identity stamps (``generated_at`` / ``invocation_id``) of the loaded artifacts.
+
+        Read from each artifact's ``metadata`` block; a missing block yields empty stamps
+        (no identity claim). Consumed by the two-manifest diff to detect a stale or shared
+        catalog and stamp the report ``structural_diff: degraded`` instead of staying silent.
+        """
+        catalog_meta = (self._catalog_reader.catalog or {}).get("metadata") or {}
+        manifest_meta = (self._manifest_reader.manifest or {}).get("metadata") or {}
+        return ArtifactStamps(
+            catalog=ArtifactStamp(
+                generated_at=catalog_meta.get("generated_at"),
+                invocation_id=catalog_meta.get("invocation_id"),
+            ),
+            manifest=ArtifactStamp(
+                generated_at=manifest_meta.get("generated_at"),
+                invocation_id=manifest_meta.get("invocation_id"),
+            ),
+        )
+
+    def get_catalog_fingerprint(self) -> str | None:
+        """Content fingerprint (sha256 over canonical JSON) of the loaded ``catalog.json``.
+
+        Byte-formatting-insensitive: two catalogs with the same CONTENT (the real signal —
+        e.g. one prod catalog mounted on both diff sides) fingerprint equal even if
+        re-serialized. ``None`` when no catalog content is loaded (no identity claim).
+        """
+        content = self._catalog_reader.catalog
+        if not content:
+            return None
+        canonical = json.dumps(content, sort_keys=True, separators=(",", ":"))
+        return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
     def get_model(self, model_name: str) -> Model:
         """Get a specific model by name."""
         if not self.is_loaded:
@@ -949,7 +1001,7 @@ class ModelRegistry:
         compiled_path = self._manifest_reader.get_model_path(model_name)
         if compiled_path:
             try:
-                with open(compiled_path, "r") as f:
+                with open(compiled_path) as f:
                     compiled_sql = f.read()
                 model.compiled_sql = compiled_sql
                 return compiled_sql

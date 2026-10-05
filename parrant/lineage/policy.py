@@ -25,8 +25,11 @@ Combinators use Kleene logic; when a still-UNKNOWN result mixes both causes, ERR
 genuine type error is never masked by a fail-open missing-meta default. A predicate that stays
 UNKNOWN at the rule level is resolved by the matching fail-safe policy: a *blocking* rule under
 ``fail_closed`` fires (bias toward safety); a non-blocking rule does not (never manufacture a
-spurious warning). ``fail_open`` never fires on UNKNOWN; ``skip`` drops the rule for that
-subject (recorded in ``skipped_missing_meta``).
+spurious warning) — but the suppression is SURFACED as ``PolicyVerdict.unproven`` telemetry so
+an all-warn pilot policy never understates what block mode will do (issue #124); the opt-in
+``defaults.warn_rules_fire_on_unknown`` knob makes the non-blocking rule fire too, at its own
+severity. ``fail_open`` never fires on UNKNOWN; ``skip`` drops the rule for that subject
+(recorded in ``skipped_missing_meta``).
 """
 
 from __future__ import annotations
@@ -61,6 +64,7 @@ from parrant.models.schema import (
     RuleHit,
     SemanticChangeKind,
     StructuralCondition,
+    UnprovenPolicyHit,
 )
 
 
@@ -151,7 +155,7 @@ def load_policy(path: str | None) -> Policy | None:
     if resolved is None:
         return None
     try:
-        with open(resolved, "r", encoding="utf-8") as handle:
+        with open(resolved, encoding="utf-8") as handle:
             raw = yaml.safe_load(handle)
     except OSError as exc:
         raise PolicyConfigError(f"could not read policy file '{resolved}': {exc}") from exc
@@ -779,10 +783,18 @@ class _Trace:
     def __init__(self) -> None:
         self.matched_reach: list[str] = []
         self.saw_unresolved_reach: bool = False
+        # Compact ``axis.key`` labels of the leaf conditions that resolved UNKNOWN — carried
+        # into the suppressed-unknown (``unproven``) telemetry so a report can say WHICH
+        # condition could not be proven, not just that one exists.
+        self.unknown_leaves: list[str] = []
 
     def add(self, name: str) -> None:
         if name not in self.matched_reach:
             self.matched_reach.append(name)
+
+    def note_unknown_leaf(self, label: str) -> None:
+        if label not in self.unknown_leaves:
+            self.unknown_leaves.append(label)
 
 
 class PolicyEngine:
@@ -822,6 +834,7 @@ class PolicyEngine:
         build_set: set[str] = set()
         test_set: set[str] = set()
         notifications: list[Notification] = []
+        unproven: list[UnprovenPolicyHit] = []
         skipped = 0
         unresolved_reach = 0
 
@@ -844,6 +857,27 @@ class PolicyEngine:
                         skipped += 1
                     continue
                 if not resolved:
+                    # Suppressed-unknown telemetry (issue #124): a fail_closed knob WOULD have
+                    # fired this rule were it blocking, but the rule is non-blocking (and the
+                    # warn_rules_fire_on_unknown knob is off), so it was suppressed. Record the
+                    # suppression so an all-warn pilot policy never silently understates what
+                    # block mode will do. Report-only: no hit, no decision, no exit-code change.
+                    if (
+                        _is_unknown(result)
+                        and not _is_blocking(rule)
+                        and self._unknown_policy(result, rule) is MissingMetaPolicy.FAIL_CLOSED
+                    ):
+                        unproven.append(
+                            UnprovenPolicyHit(
+                                rule_id=rule.id,
+                                change_model=subject.model if subject else None,
+                                change_column=subject.column if subject else None,
+                                unknown_cause=(
+                                    "error" if result is Tri.UNKNOWN_ERROR else "missing"
+                                ),
+                                unknown_leaves=list(trace.unknown_leaves),
+                            )
+                        )
                     continue
 
                 hit, b_add, t_add, notes = self._apply_actions(rule, subject, trace)
@@ -878,6 +912,8 @@ class PolicyEngine:
             fired_rules=len(hits),
             unresolved_reach_count=unresolved_reach,
             skipped_missing_meta=skipped,
+            unproven=unproven,
+            unproven_count=len(unproven),
         )
 
     # -- built-in semantic-severity knobs ------------------------------------
@@ -931,7 +967,10 @@ class PolicyEngine:
           * ``UNKNOWN_ERROR`` (operator/type mismatch) -> ``on_error``.
         Each falls back rule -> policy default. The chosen policy then resolves the leaf:
           * fail_closed: a *blocking* rule fires (bias toward safety); a non-blocking rule does
-            not (never manufacture a spurious warning) — the asymmetry from.
+            not (never manufacture a spurious warning) — the asymmetry from — UNLESS the
+            policy-level ``defaults.warn_rules_fire_on_unknown`` knob is on, in which case the
+            non-blocking rule fires too, at its own declared severity (issue #124). A suppressed
+            non-blocking firing (knob off) is surfaced as ``PolicyVerdict.unproven`` telemetry.
           * fail_open: never fires on UNKNOWN.
           * skip: returns None (drop the rule for this subject; counted for honesty).
         """
@@ -939,16 +978,19 @@ class PolicyEngine:
             return True
         if result is Tri.FALSE:
             return False
-        if result is Tri.UNKNOWN_ERROR:
-            policy = rule.on_error or self._policy.defaults.on_error
-        else:  # UNKNOWN_MISSING
-            policy = rule.on_missing_meta or self._policy.defaults.on_missing_meta
+        policy = self._unknown_policy(result, rule)
         if policy is MissingMetaPolicy.SKIP:
             return None
         if policy is MissingMetaPolicy.FAIL_OPEN:
             return False
-        # fail_closed: blocking rules fire on UNKNOWN, non-blocking rules do not.
-        return _is_blocking(rule)
+        # fail_closed: blocking rules fire on UNKNOWN; non-blocking rules only under the knob.
+        return _is_blocking(rule) or self._policy.defaults.warn_rules_fire_on_unknown
+
+    def _unknown_policy(self, result: Tri, rule: Rule) -> MissingMetaPolicy:
+        """The fail-safe knob that governs this UNKNOWN, per its cause (rule -> policy default)."""
+        if result is Tri.UNKNOWN_ERROR:
+            return rule.on_error or self._policy.defaults.on_error
+        return rule.on_missing_meta or self._policy.defaults.on_missing_meta
 
     # -- predicate evaluation (change scope) ---------------------------------
 
@@ -959,19 +1001,33 @@ class PolicyEngine:
             return _or([self._eval_predicate(p, subject, trace) for p in predicate.any_])
         if predicate.not_ is not None:
             return _not(self._eval_predicate(predicate.not_, subject, trace))
+        # A leaf: evaluate it and, when it resolves UNKNOWN, note its compact ``axis.key`` label
+        # on the trace so the suppressed-unknown telemetry can name WHICH condition was unproven.
+        result: Tri
+        label: str
         if predicate.change is not None:
-            return self._eval_change(predicate.change, subject)
-        if predicate.meta is not None:
-            return self._eval_meta_subject(predicate.meta, subject)
-        if predicate.inferred_meta is not None:
-            return self._eval_inferred_subject(predicate.inferred_meta, subject)
-        if predicate.config is not None:
-            return self._eval_config_subject(predicate.config, subject)
-        if predicate.reach is not None:
-            return self._eval_reach(predicate.reach, subject, trace)
-        if predicate.structural is not None:
-            return self._eval_structural(predicate.structural, subject, trace)
-        return Tri.UNKNOWN_ERROR  # unreachable: the schema enforces exactly-one
+            result = self._eval_change(predicate.change, subject)
+            label = f"change.{predicate.change.field}"
+        elif predicate.meta is not None:
+            result = self._eval_meta_subject(predicate.meta, subject)
+            label = f"meta.{predicate.meta.key}"
+        elif predicate.inferred_meta is not None:
+            result = self._eval_inferred_subject(predicate.inferred_meta, subject)
+            label = f"inferred_meta.{predicate.inferred_meta.key}"
+        elif predicate.config is not None:
+            result = self._eval_config_subject(predicate.config, subject)
+            label = f"config.{predicate.config.key}"
+        elif predicate.reach is not None:
+            result = self._eval_reach(predicate.reach, subject, trace)
+            label = f"reach.{predicate.reach.kind.value}"
+        elif predicate.structural is not None:
+            result = self._eval_structural(predicate.structural, subject, trace)
+            label = f"structural.{predicate.structural.fact}"
+        else:
+            return Tri.UNKNOWN_ERROR  # unreachable: the schema enforces exactly-one
+        if _is_unknown(result):
+            trace.note_unknown_leaf(label)
+        return result
 
     def _eval_change(self, cond: ChangeCondition, subject: ColumnChange) -> Tri:
         # NOTE: ``change.semantic`` (and ``change.kind``) are always PRESENT lookups, so a

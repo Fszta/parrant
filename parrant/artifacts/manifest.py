@@ -49,7 +49,7 @@ class ManifestReader:
     def load(self) -> None:
         if not self.manifest_path or not self.manifest_path.exists():
             raise FileNotFoundError(f"Manifest file not found: {self.manifest_path}")
-        with open(self.manifest_path, "r") as f:
+        with open(self.manifest_path) as f:
             self.manifest = json.load(f)
 
     def get_adapter(self) -> str | None:
@@ -80,6 +80,55 @@ class ManifestReader:
             dependencies[model_id] = depends_on
         return dependencies
 
+    def get_macro_dependents(self) -> dict[str, set[str]]:
+        """Map each macro *file* to the model-like nodes whose compiled SQL it can affect.
+
+        Keys are the macros' normalized ``original_file_path`` (e.g. ``macros/money.sql``);
+        values are lowercased names of nodes (models/snapshots/seeds) that depend on a macro
+        in that file — directly (``node.depends_on.macros``) or transitively (a macro that a
+        used macro itself calls, via the ``macros[*].depends_on.macros`` graph). Feeds the
+        ``--scope-git`` fail-safe: a changed macro file scopes to exactly these dependents.
+        """
+        macros = self.manifest.get("macros", {})
+        macro_calls: dict[str, list[str]] = {
+            macro_id: list(macro.get("depends_on", {}).get("macros", []))
+            for macro_id, macro in macros.items()
+        }
+
+        # For each macro id, the closure of macros it (transitively) calls, itself included.
+        # Iterative BFS with a visited set so macro-call cycles terminate.
+        def _closure(macro_id: str) -> set[str]:
+            seen: set[str] = set()
+            stack = [macro_id]
+            while stack:
+                current = stack.pop()
+                if current in seen:
+                    continue
+                seen.add(current)
+                stack.extend(macro_calls.get(current, []))
+            return seen
+
+        def _norm(path: str) -> str:
+            return re.sub(r"^\./", "", path.strip()).lstrip("/")
+
+        dependents: dict[str, set[str]] = {
+            _norm(macro.get("original_file_path") or ""): set()
+            for macro in macros.values()
+            if macro.get("original_file_path")
+        }
+        for node in self.manifest.get("nodes", {}).values():
+            if node.get("resource_type") not in ("model", "snapshot", "seed"):
+                continue
+            node_name = (node.get("name") or "").lower()
+            if not node_name:
+                continue
+            for macro_id in node.get("depends_on", {}).get("macros", []):
+                for reached in _closure(macro_id):
+                    path = (macros.get(reached) or {}).get("original_file_path")
+                    if path:
+                        dependents[_norm(path)].add(node_name)
+        return dependents
+
     def get_model_upstream(self) -> dict[str, set[str]]:
         """Get upstream dependencies for each model."""
         upstream: dict[str, set[str]] = {}
@@ -109,7 +158,10 @@ class ManifestReader:
                             # Fallback to source name if identifier not found
                             source_name = parts[-1].lower()
                             upstream[model_name].add(source_name)
-                    elif parts[0] == "snapshot":
+                    elif parts[0] in ("snapshot", "seed"):
+                        # Seeds are upstream nodes like any other: without this edge a model
+                        # ref()ing a seed records no dependency, so the seed's consumers are
+                        # invisible to reachability and to the rebuild selection.
                         dep_name = parts[-1].lower()
                         upstream[model_name].add(dep_name)
 
