@@ -30,7 +30,7 @@ import json
 import sys
 import tempfile
 from pathlib import Path
-from typing import Any, Dict, List, Set
+from typing import Any
 
 import pytest
 from click.testing import CliRunner
@@ -39,7 +39,7 @@ from parrant.cli.main import cli, impact
 
 _FIXTURE_DIR = Path(__file__).parents[1] / "fixtures" / "unresolved_edges"
 sys.path.insert(0, str(_FIXTURE_DIR))
-import _build  # noqa: E402  (path-injected fixture builder)
+import _build  # type: ignore[import-not-found]
 
 # Materialize the abstract manifest + catalog once into a tmp dir for the whole module.
 _TMP = tempfile.TemporaryDirectory()
@@ -57,14 +57,14 @@ _PHANTOM_MODEL = "int_c"
 _CHANGED_UPSTREAM = "stg_a"
 
 
-def _json_from_output(output: str) -> Dict[str, Any]:
+def _json_from_output(output: str) -> dict[str, Any]:
     """Parse the JSON report out of the CLI stdout (skipping any leading log lines)."""
     start = output.index("{")
     payload, _ = json.JSONDecoder().raw_decode(output[start:])
     return payload
 
 
-def _run(command: Any, args: List[str]) -> Dict[str, Any]:
+def _run(command: Any, args: list[str]) -> dict[str, Any]:
     result = CliRunner().invoke(command, args, catch_exceptions=False)
     assert result.exit_code == 0, f"exit={result.exit_code}\noutput={result.output}"
     return _json_from_output(result.output)
@@ -81,7 +81,7 @@ def _qualifier(token: str) -> str:
     return token.split(".", 1)[0].strip().strip('"').lower()
 
 
-def _legit_upstreams(upstream_block: Dict[str, Any]) -> Set[str]:
+def _legit_upstreams(upstream_block: dict[str, Any]) -> set[str]:
     """The REAL upstreams parrant grouped this column's edges under (ground-truth qualifiers).
 
     ``upstream.models`` keys are always real dbt nodes; ``sources``/``direct_refs`` are real too.
@@ -93,18 +93,20 @@ def _legit_upstreams(upstream_block: Dict[str, Any]) -> Set[str]:
     return legit
 
 
-def _all_source_tokens(upstream_block: Dict[str, Any]) -> Set[str]:
-    tokens: Set[str] = set()
+def _all_source_tokens(upstream_block: dict[str, Any]) -> set[str]:
+    tokens: set[str] = set()
     for source_cols in upstream_block.get("models", {}).values():
         for edge in source_cols.values():
             tokens |= set(edge.get("source_columns", []))
     return tokens
 
 
-def _phantom_tokens(upstream_block: Dict[str, Any]) -> Set[str]:
+def _phantom_tokens(upstream_block: dict[str, Any]) -> set[str]:
     legit = _legit_upstreams(upstream_block)
     return {
-        token for token in _all_source_tokens(upstream_block) if _qualifier(token) not in legit | {""}
+        token
+        for token in _all_source_tokens(upstream_block)
+        if _qualifier(token) not in legit | {""}
     }
 
 
@@ -147,7 +149,7 @@ def test_flatten_column_has_no_phantom_source_via_cli() -> None:
 # Propagation: a change reaching a phantom-bearing model degrades confidence and forces its rebuild.
 # --------------------------------------------------------------------------------------------- #
 @pytest.fixture
-def impact_reaching_phantom(tmp_path: Path) -> Dict[str, Any]:
+def impact_reaching_phantom(tmp_path: Path) -> dict[str, Any]:
     """Run ``parrant impact`` for a change on ``stg_a`` (an upstream of the
     marker-bearing ``int_c``).
 

@@ -16,7 +16,8 @@ from __future__ import annotations
 import concurrent.futures
 import contextlib
 import time
-from typing import Any, Callable, Dict, Iterator, List, Optional
+from collections.abc import Callable, Iterator
+from typing import Any
 
 try:  # ``requests`` is a runtime dependency; import lazily so importing the type/schema
     import requests  # modules never forces it (defensive — mirrors the offline guardrail).
@@ -56,9 +57,9 @@ class MetabaseClient:
     def __init__(
         self,
         base_url: str,
-        api_key: Optional[str] = None,
-        username: Optional[str] = None,
-        password: Optional[str] = None,
+        api_key: str | None = None,
+        username: str | None = None,
+        password: str | None = None,
         session: Any = None,
         timeout: int = 30,
         max_retries: int = 5,
@@ -78,7 +79,7 @@ class MetabaseClient:
         self.max_retries = max_retries
         self.page_size = page_size
         self._sleep = sleep
-        self._session_token: Optional[str] = None
+        self._session_token: str | None = None
         self._authenticated = False
 
     # --- auth -------------------------------------------------------------
@@ -118,7 +119,7 @@ class MetabaseClient:
         ``_ensure_auth`` and duplicate the ``POST /api/session``."""
         self._ensure_auth()
 
-    def _headers(self) -> Dict[str, str]:
+    def _headers(self) -> dict[str, str]:
         headers = {"Content-Type": "application/json"}
         if self._api_key:
             headers["x-api-key"] = self._api_key
@@ -127,11 +128,11 @@ class MetabaseClient:
         return headers
 
     # --- transport --------------------------------------------------------
-    def _get(self, path: str, params: Optional[Dict[str, Any]] = None) -> Any:
+    def _get(self, path: str, params: dict[str, Any] | None = None) -> Any:
         """GET ``path`` with retry/backoff on 429/5xx; returns the parsed JSON body."""
         self._ensure_auth()
         url = f"{self.base_url}{path}"
-        last_exc: Optional[Exception] = None
+        last_exc: Exception | None = None
         for attempt in range(self.max_retries + 1):
             try:
                 resp = self._session.get(
@@ -161,7 +162,7 @@ class MetabaseClient:
         # still de-synchronizing concurrent extractors.
         self._sleep(delay + (attempt % 3) * 0.1)
 
-    def _paginate(self, path: str, extra_params: Optional[Dict[str, Any]] = None) -> Iterator[dict]:
+    def _paginate(self, path: str, extra_params: dict[str, Any] | None = None) -> Iterator[dict]:
         """Yield every item from a Metabase list endpoint.
 
         Metabase's bulk list endpoints (``/api/card``, ``/api/dashboard``,
@@ -181,7 +182,7 @@ class MetabaseClient:
 
         offset = 0
         for _ in range(_MAX_PAGES):
-            params: Dict[str, Any] = dict(extra_params or {})
+            params: dict[str, Any] = dict(extra_params or {})
             params.update({"limit": self.page_size, "offset": offset})
             page = self._get(path, params=params)
             items = page.get("data", []) if isinstance(page, dict) else (page or [])
@@ -193,14 +194,14 @@ class MetabaseClient:
             offset += len(items)
 
     # --- endpoints --------------------------------------------------------
-    def list_cards(self, include_archived: bool = False) -> List[dict]:
+    def list_cards(self, include_archived: bool = False) -> list[dict]:
         """All cards (``GET /api/card``), MBQL pinned to the legacy (v4) serialization."""
         params = dict(LEGACY_MBQL_PARAM)
         if include_archived:
             params["f"] = "archived"
         return list(self._paginate("/api/card", extra_params=params))
 
-    def list_dashboards(self) -> List[dict]:
+    def list_dashboards(self) -> list[dict]:
         """All dashboards (``GET /api/dashboard``) — summary shells; use
         :meth:`get_dashboard` for each one's ``dashcards``."""
         return list(self._paginate("/api/dashboard"))
@@ -209,7 +210,7 @@ class MetabaseClient:
         """One dashboard with its ``dashcards`` (``GET /api/dashboard/:id``)."""
         return self._get(f"/api/dashboard/{dashboard_id}")
 
-    def get_dashboards(self, dashboard_ids: List[int], max_workers: int = 8) -> Dict[int, dict]:
+    def get_dashboards(self, dashboard_ids: list[int], max_workers: int = 8) -> dict[int, dict]:
         """Fetch many dashboards concurrently, returning ``{id: detail}``.
 
         Auth is warmed once up front (:meth:`ensure_auth`) so worker threads never race on
@@ -225,7 +226,7 @@ class MetabaseClient:
             return {did: self.get_dashboard(did) for did in dashboard_ids}
 
         workers = max(1, min(max_workers, len(dashboard_ids)))
-        results: Dict[int, dict] = {}
+        results: dict[int, dict] = {}
         executor = concurrent.futures.ThreadPoolExecutor(max_workers=workers)
         try:
             futures = {executor.submit(self.get_dashboard, did): did for did in dashboard_ids}
@@ -239,11 +240,11 @@ class MetabaseClient:
             executor.shutdown(wait=True, cancel_futures=True)
         return results
 
-    def list_snippets(self) -> List[dict]:
+    def list_snippets(self) -> list[dict]:
         """All native-query snippets (``GET /api/native-query-snippet``)."""
         return list(self._paginate("/api/native-query-snippet"))
 
-    def server_version(self) -> Optional[str]:
+    def server_version(self) -> str | None:
         """Best-effort Metabase version tag (``GET /api/session/properties``) for provenance.
 
         Returns ``None`` if the endpoint is unavailable — version stamping is nice-to-have,

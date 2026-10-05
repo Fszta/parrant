@@ -35,12 +35,14 @@ severity. ``fail_open`` never fires on UNKNOWN; ``skip`` drops the rule for that
 from __future__ import annotations
 
 import re
+from collections.abc import Iterable
 from enum import Enum
-from typing import Any, Dict, Iterable, List, NamedTuple, Optional, Protocol, Set, Tuple
+from typing import Any, NamedTuple, Protocol
 
 import yaml
 
 from parrant.lineage.changeset import ColumnChange
+from parrant.lineage.verdict import ineffective_override_record
 from parrant.models.schema import (
     Action,
     ActionKind,
@@ -64,7 +66,6 @@ from parrant.models.schema import (
     StructuralCondition,
     UnprovenPolicyHit,
 )
-from parrant.lineage.verdict import ineffective_override_record
 
 
 class PolicyConfigError(Exception):
@@ -103,7 +104,7 @@ def _is_unknown(value: Tri) -> bool:
     return value is Tri.UNKNOWN_MISSING or value is Tri.UNKNOWN_ERROR
 
 
-def _merge_unknown(values: List[Tri]) -> Tri:
+def _merge_unknown(values: list[Tri]) -> Tri:
     """Collapse the surviving UNKNOWNs to a single cause. ERROR dominates MISSING so a genuine
     type error is never masked by a fail-open missing-meta default (fail-safe bias)."""
     if any(v is Tri.UNKNOWN_ERROR for v in values):
@@ -111,7 +112,7 @@ def _merge_unknown(values: List[Tri]) -> Tri:
     return Tri.UNKNOWN_MISSING
 
 
-def _and(values: List[Tri]) -> Tri:
+def _and(values: list[Tri]) -> Tri:
     """Kleene AND: any FALSE -> FALSE; else any UNKNOWN -> UNKNOWN; else TRUE. Empty -> TRUE."""
     if any(v is Tri.FALSE for v in values):
         return Tri.FALSE
@@ -121,7 +122,7 @@ def _and(values: List[Tri]) -> Tri:
     return Tri.TRUE
 
 
-def _or(values: List[Tri]) -> Tri:
+def _or(values: list[Tri]) -> Tri:
     """Kleene OR: any TRUE -> TRUE; else any UNKNOWN -> UNKNOWN; else FALSE. Empty -> FALSE."""
     if any(v is Tri.TRUE for v in values):
         return Tri.TRUE
@@ -142,7 +143,7 @@ def _not(value: Tri) -> Tri:
 # --- config loading ---------------------------------------------------------
 
 
-def load_policy(path: Optional[str]) -> Optional[Policy]:
+def load_policy(path: str | None) -> Policy | None:
     """Resolve and parse the policy file.
 
     Resolution order (first found): explicit ``path`` -> ``./parrant.policy.yml`` ->
@@ -154,7 +155,7 @@ def load_policy(path: Optional[str]) -> Optional[Policy]:
     if resolved is None:
         return None
     try:
-        with open(resolved, "r", encoding="utf-8") as handle:
+        with open(resolved, encoding="utf-8") as handle:
             raw = yaml.safe_load(handle)
     except OSError as exc:
         raise PolicyConfigError(f"could not read policy file '{resolved}': {exc}") from exc
@@ -185,7 +186,7 @@ def parse_policy(raw: Any, source: str = "<policy>") -> Policy:
         raise PolicyConfigError(f"policy '{source}' is invalid: {exc}") from exc
 
 
-def _resolve_policy_path(path: Optional[str]) -> Optional[str]:
+def _resolve_policy_path(path: str | None) -> str | None:
     """First existing path among explicit -> repo default.
 
     The default filename is ``parrant.policy.yml``; the legacy ``dbt-col-lineage.policy.yml`` is
@@ -263,7 +264,7 @@ class CombineStrategy(Protocol):
 
     def to_element(self, value: Any) -> _Lattice: ...
 
-    def combine(self, elements: List[_Lattice]) -> _Lattice: ...
+    def combine(self, elements: list[_Lattice]) -> _Lattice: ...
 
 
 class _MostRestrictive:
@@ -273,7 +274,7 @@ class _MostRestrictive:
     def to_element(self, value: Any) -> _Lattice:
         return _Lattice.HIGH if bool(value) else _Lattice.LOW
 
-    def combine(self, elements: List[_Lattice]) -> _Lattice:
+    def combine(self, elements: list[_Lattice]) -> _Lattice:
         if not elements:
             return _Lattice.UNKNOWN
         return max(elements, key=lambda element: element.value)
@@ -288,7 +289,7 @@ class _BooleanOr:
     def to_element(self, value: Any) -> _Lattice:
         return _Lattice.HIGH if bool(value) else _Lattice.LOW
 
-    def combine(self, elements: List[_Lattice]) -> _Lattice:
+    def combine(self, elements: list[_Lattice]) -> _Lattice:
         if any(element is _Lattice.HIGH for element in elements):
             return _Lattice.HIGH
         if any(element is _Lattice.UNKNOWN for element in elements):
@@ -299,7 +300,7 @@ class _BooleanOr:
 # The fold policy per meta key. Unregistered keys fall back to the most-restrictive fold — the
 # fail-safe direction (an unclassified lineage is treated as "not proven safe").
 _DEFAULT_STRATEGY: CombineStrategy = _MostRestrictive()
-_COMBINE_STRATEGIES: Dict[str, CombineStrategy] = {
+_COMBINE_STRATEGIES: dict[str, CombineStrategy] = {
     "pii": _MostRestrictive(),
     "secret": _BooleanOr(),
 }
@@ -310,7 +311,7 @@ def _combine_strategy_for(key: str) -> CombineStrategy:
     return _COMBINE_STRATEGIES.get(key.lower(), _DEFAULT_STRATEGY)
 
 
-def _split_ref(source: str) -> Optional[Tuple[str, str]]:
+def _split_ref(source: str) -> tuple[str, str] | None:
     """Split a ``model.column`` lineage ref into ``(model, column)``, both lowercased.
 
     Mirrors the service's split: everything before the last ``.`` is the model, the last segment
@@ -323,7 +324,7 @@ def _split_ref(source: str) -> Optional[Tuple[str, str]]:
     return (".".join(parts[:-1]).lower(), parts[-1].lower())
 
 
-def _element_to_lookup(element: _Lattice) -> "MetaLookup":
+def _element_to_lookup(element: _Lattice) -> MetaLookup:
     """Map a folded lattice element to a :class:`MetaLookup`. ``UNKNOWN`` -> ``present=False`` so
     the engine treats an unresolvable inferred value as a missing key (fail-closed)."""
     if element is _Lattice.HIGH:
@@ -353,15 +354,15 @@ class MetaIndex:
     def __init__(self, registry: Any, metabase_reach: Any = None) -> None:
         self._registry = registry
         self._metabase_reach = metabase_reach
-        self._model_cache: Dict[str, Dict[str, Any]] = {}
-        self._config_cache: Dict[str, Dict[str, Any]] = {}
-        self._column_cache: Dict[Tuple[str, str], Dict[str, Any]] = {}
-        self._exposures: Optional[Dict[str, Any]] = None
+        self._model_cache: dict[str, dict[str, Any]] = {}
+        self._config_cache: dict[str, dict[str, Any]] = {}
+        self._column_cache: dict[tuple[str, str], dict[str, Any]] = {}
+        self._exposures: dict[str, Any] | None = None
         # Memoize resolved inferred meta across the (immutable) column DAG, keyed by
         # (model, column, key) lowercased — folding a diamond visits each node once.
-        self._inferred_cache: Dict[Tuple[str, str, str], MetaLookup] = {}
+        self._inferred_cache: dict[tuple[str, str, str], MetaLookup] = {}
 
-    def _model_dict(self, model: str) -> Dict[str, Any]:
+    def _model_dict(self, model: str) -> dict[str, Any]:
         cached = self._model_cache.get(model)
         if cached is None:
             getter = getattr(self._registry, "get_model_dbt_meta", None)
@@ -369,7 +370,7 @@ class MetaIndex:
             self._model_cache[model] = cached
         return cached
 
-    def _config_dict(self, model: str) -> Dict[str, Any]:
+    def _config_dict(self, model: str) -> dict[str, Any]:
         cached = self._config_cache.get(model)
         if cached is None:
             getter = getattr(self._registry, "get_model_config", None)
@@ -377,7 +378,7 @@ class MetaIndex:
             self._config_cache[model] = cached
         return cached
 
-    def _column_dict(self, model: str, column: str) -> Dict[str, Any]:
+    def _column_dict(self, model: str, column: str) -> dict[str, Any]:
         key = (model, column)
         cached = self._column_cache.get(key)
         if cached is None:
@@ -386,7 +387,7 @@ class MetaIndex:
             self._column_cache[key] = cached
         return cached
 
-    def _exposure_dict(self, exposure: str) -> Optional[Any]:
+    def _exposure_dict(self, exposure: str) -> Any | None:
         if self._exposures is None:
             getter = getattr(self._registry, "get_exposures", None)
             try:
@@ -448,8 +449,8 @@ class MetaIndex:
         column: str,
         key: str,
         strategy: CombineStrategy,
-        visiting: Set[Tuple[str, str, str]],
-    ) -> Tuple[MetaLookup, bool]:
+        visiting: set[tuple[str, str, str]],
+    ) -> tuple[MetaLookup, bool]:
         """Fold ``model.column``'s inferred value, returning ``(result, touched_cycle)``.
 
         ``touched_cycle`` is True iff this node's fold DEPENDED on a cycle-guard hit (an upstream
@@ -481,7 +482,7 @@ class MetaIndex:
 
         # Rules 2 & 3: fold the upstream source columns' inferred values.
         visiting.add(memo_key)
-        elements: List[_Lattice] = []
+        elements: list[_Lattice] = []
         touched_cycle = False
         for src_model, src_column in self._upstream_source_columns(model, column):
             child, child_touched = self._inferred_lookup(
@@ -498,7 +499,7 @@ class MetaIndex:
             self._inferred_cache[memo_key] = result
         return result, touched_cycle
 
-    def _upstream_source_columns(self, model: str, column: str) -> Iterable[Tuple[str, str]]:
+    def _upstream_source_columns(self, model: str, column: str) -> Iterable[tuple[str, str]]:
         """The distinct ``(model, column)`` upstream source columns feeding ``model.column``.
 
         Reads the provider's ``get_column_lineage`` edges (duck-typed like the meta accessors, so
@@ -511,8 +512,8 @@ class MetaIndex:
             edges = getter(model, column) or []
         except Exception:
             return []
-        seen: Set[Tuple[str, str]] = set()
-        out: List[Tuple[str, str]] = []
+        seen: set[tuple[str, str]] = set()
+        out: list[tuple[str, str]] = []
         for edge in edges:
             for source in getattr(edge, "source_columns", None) or []:
                 pair = _split_ref(str(source))
@@ -553,11 +554,11 @@ class ReachedObject(NamedTuple):
 
     kind: ReachKind
     name: str
-    column: Optional[str]
-    mechanism: Optional[Mechanism]
+    column: str | None
+    mechanism: Mechanism | None
 
 
-def _to_mechanism(raw: Optional[str]) -> Optional[Mechanism]:
+def _to_mechanism(raw: str | None) -> Mechanism | None:
     if raw is None:
         return None
     try:
@@ -575,8 +576,8 @@ class ImpactView:
     :meth:`is_resolved` reports that so the engine can fail-safe.
     """
 
-    def __init__(self, changeset_impact: Dict[str, Any]) -> None:
-        self._by_key: Dict[Tuple[str, str, str], Dict[str, Any]] = {}
+    def __init__(self, changeset_impact: dict[str, Any]) -> None:
+        self._by_key: dict[tuple[str, str, str], dict[str, Any]] = {}
         for entry in changeset_impact.get("by_change", []):
             key = (
                 str(entry.get("model")),
@@ -587,7 +588,7 @@ class ImpactView:
             if key not in self._by_key:
                 self._by_key[key] = entry
 
-    def _entry(self, change: ColumnChange) -> Optional[Dict[str, Any]]:
+    def _entry(self, change: ColumnChange) -> dict[str, Any] | None:
         return self._by_key.get((change.model, change.column, change.kind.value))
 
     def is_resolved(self, change: ColumnChange) -> bool:
@@ -598,13 +599,13 @@ class ImpactView:
         self,
         change: ColumnChange,
         kind: ReachKind,
-        mechanism: Optional[List[Mechanism]] = None,
-    ) -> List[ReachedObject]:
+        mechanism: list[Mechanism] | None = None,
+    ) -> list[ReachedObject]:
         entry = self._entry(change)
         if not entry or not entry.get("resolved"):
             return []
         wanted = set(mechanism) if mechanism else None
-        out: List[ReachedObject] = []
+        out: list[ReachedObject] = []
         if kind is ReachKind.MODEL:
             for item in entry.get("reached_models", []):
                 mech = _to_mechanism(item.get("mechanism"))
@@ -624,7 +625,7 @@ class ImpactView:
         return out
 
 
-def build_impact_view(changeset_impact: Dict[str, Any]) -> ImpactView:
+def build_impact_view(changeset_impact: dict[str, Any]) -> ImpactView:
     """Adapt a ``get_changeset_impact`` report dict into an :class:`ImpactView` (pure)."""
     return ImpactView(changeset_impact)
 
@@ -632,7 +633,7 @@ def build_impact_view(changeset_impact: Dict[str, Any]) -> ImpactView:
 # --- operator evaluation ----------------------------------------------------
 
 
-def _as_list(value: Any) -> Optional[List[Any]]:
+def _as_list(value: Any) -> list[Any] | None:
     if isinstance(value, (list, tuple, set)):
         return list(value)
     return None
@@ -780,12 +781,12 @@ class _Trace:
     """Accumulates matched reach object names while a predicate is evaluated for one subject."""
 
     def __init__(self) -> None:
-        self.matched_reach: List[str] = []
+        self.matched_reach: list[str] = []
         self.saw_unresolved_reach: bool = False
         # Compact ``axis.key`` labels of the leaf conditions that resolved UNKNOWN — carried
         # into the suppressed-unknown (``unproven``) telemetry so a report can say WHICH
         # condition could not be proven, not just that one exists.
-        self.unknown_leaves: List[str] = []
+        self.unknown_leaves: list[str] = []
 
     def add(self, name: str) -> None:
         if name not in self.matched_reach:
@@ -807,7 +808,7 @@ class PolicyEngine:
         policy: Policy,
         meta: MetaIndex,
         impact: ImpactView,
-        breaks: List[BreakFinding],
+        breaks: list[BreakFinding],
     ) -> None:
         self._policy = policy
         self._meta = meta
@@ -818,27 +819,27 @@ class PolicyEngine:
 
     # -- public API ----------------------------------------------------------
 
-    def evaluate(self, changes: List[ColumnChange]) -> PolicyVerdict:
+    def evaluate(self, changes: list[ColumnChange]) -> PolicyVerdict:
         """Run every rule against every subject (or once, for aggregate rules); combine per §2.6.
 
         Total and deterministic: never raises on rule content (config errors surface at load).
         An undecidable predicate resolves per the rule's ``MissingMetaPolicy``.
         """
         # index the changeset by (model, column) lowercased so override caps are O(1).
-        self._change_by_key: Dict[Tuple[str, str], ColumnChange] = {
+        self._change_by_key: dict[tuple[str, str], ColumnChange] = {
             (c.model.lower(), c.column.lower()): c for c in changes
         }
 
-        hits: List[RuleHit] = []
+        hits: list[RuleHit] = []
         build_set: set[str] = set()
         test_set: set[str] = set()
-        notifications: List[Notification] = []
-        unproven: List[UnprovenPolicyHit] = []
+        notifications: list[Notification] = []
+        unproven: list[UnprovenPolicyHit] = []
         skipped = 0
         unresolved_reach = 0
 
         for rule in self._policy.rules:
-            subjects: List[Optional[ColumnChange]]
+            subjects: list[ColumnChange | None]
             subjects = [None] if rule.scope == "aggregate" else list(changes)
             for subject in subjects:
                 trace = _Trace()
@@ -917,7 +918,7 @@ class PolicyEngine:
 
     # -- built-in semantic-severity knobs ------------------------------------
 
-    def _semantic_default_hits(self, changes: List[ColumnChange]) -> List[RuleHit]:
+    def _semantic_default_hits(self, changes: list[ColumnChange]) -> list[RuleHit]:
         """Synthesize gate contributions from ``defaults.on_meaning_changed`` / ``on_indeterminate``.
 
         These are the ergonomic shortcut for "gate on the semantic axis" without authoring a
@@ -937,7 +938,7 @@ class PolicyEngine:
             SemanticChangeKind.MEANING_CHANGED: (defaults.on_meaning_changed, "on_meaning_changed"),
             SemanticChangeKind.INDETERMINATE: (defaults.on_indeterminate, "on_indeterminate"),
         }
-        hits: List[RuleHit] = []
+        hits: list[RuleHit] = []
         for change in changes:
             if change.semantic is None:
                 continue
@@ -957,7 +958,7 @@ class PolicyEngine:
 
     # -- fail-safe resolution ------------------------------------------------
 
-    def _resolve(self, result: Tri, rule: Rule) -> Optional[bool]:
+    def _resolve(self, result: Tri, rule: Rule) -> bool | None:
         """Resolve a (possibly UNKNOWN) predicate result to fire / not-fire / skip.
 
         TRUE -> fire; FALSE -> not fire. An UNKNOWN is routed to the fail-safe knob that matches
@@ -1076,7 +1077,7 @@ class PolicyEngine:
             return Tri.UNKNOWN_MISSING
         objects = self._impact.reached(subject, cond.kind, cond.mechanism)
         n_true = 0
-        unknowns: List[Tri] = []
+        unknowns: list[Tri] = []
         for obj in objects:
             inner = self._eval_where(cond.where, obj)
             if inner is Tri.TRUE:
@@ -1168,7 +1169,7 @@ class PolicyEngine:
     # -- predicate evaluation (aggregate scope) ------------------------------
 
     def _eval_aggregate(
-        self, predicate: Predicate, changes: List[ColumnChange], trace: _Trace
+        self, predicate: Predicate, changes: list[ColumnChange], trace: _Trace
     ) -> Tri:
         """Aggregate scope: each leaf is quantified existentially over the whole changeset.
 
@@ -1187,12 +1188,12 @@ class PolicyEngine:
     # -- actions -------------------------------------------------------------
 
     def _apply_actions(
-        self, rule: Rule, subject: Optional[ColumnChange], trace: _Trace
-    ) -> Tuple[RuleHit, "set[str]", "set[str]", List[Notification]]:
+        self, rule: Rule, subject: ColumnChange | None, trace: _Trace
+    ) -> tuple[RuleHit, set[str], set[str], list[Notification]]:
         build_add: set[str] = set()
         test_add: set[str] = set()
-        notes: List[Notification] = []
-        action_kinds: List[ActionKind] = []
+        notes: list[Notification] = []
+        action_kinds: list[ActionKind] = []
 
         for action in rule.action:
             action_kinds.append(action.type)
@@ -1217,7 +1218,7 @@ class PolicyEngine:
             notes,
         )
 
-    def _collect_nodes(self, action: Action, subject: Optional[ColumnChange]) -> "set[str]":
+    def _collect_nodes(self, action: Action, subject: ColumnChange | None) -> set[str]:
         nodes: set[str] = set()
         if subject is None:
             return nodes
@@ -1229,7 +1230,7 @@ class PolicyEngine:
         return nodes
 
     def _build_notification(
-        self, rule: Rule, action: Action, subject: Optional[ColumnChange], trace: _Trace
+        self, rule: Rule, action: Action, subject: ColumnChange | None, trace: _Trace
     ) -> Notification:
         template = action.message or ""
         values = {
@@ -1247,7 +1248,7 @@ class PolicyEngine:
 
     # -- override caps --------------------------------------------------
 
-    def _apply_override_caps(self, hits: List[RuleHit]) -> None:
+    def _apply_override_caps(self, hits: list[RuleHit]) -> None:
         """Cap each subject-scoped hit whose change carries an override (mutates in place).
 
         - ``allow-break`` caps a BLOCK to WARN (the only verb that may touch a block).
@@ -1288,7 +1289,7 @@ class PolicyEngine:
 
     # -- combination ---------------------------------------------------------
 
-    def _combine_decision(self, hits: List[RuleHit]) -> GateDecision:
+    def _combine_decision(self, hits: list[RuleHit]) -> GateDecision:
         decision = GateDecision.ALLOW
         for hit in hits:
             if hit.decision.severity > decision.severity:
@@ -1321,22 +1322,22 @@ def _reached_display(obj: ReachedObject) -> str:
 _INTERPOLATE_RE = re.compile(r"\{([a-z]+(?:\.[a-z]+)?)\}")
 
 
-def _interpolate(template: str, values: Dict[str, str]) -> str:
+def _interpolate(template: str, values: dict[str, str]) -> str:
     """Substitute the small safe vocabulary ``{change.*}`` / ``{reach.count}`` / ``{rule.id}``.
 
     Unknown tokens are left verbatim (no arbitrary code, no KeyError).
     """
 
-    def repl(match: "re.Match[str]") -> str:
+    def repl(match: re.Match[str]) -> str:
         token = match.group(1)
         return values.get(token, match.group(0))
 
     return _INTERPOLATE_RE.sub(repl, template)
 
 
-def _dedup_notifications(notes: List[Notification]) -> List[Notification]:
-    seen: set[Tuple[str, str, str]] = set()
-    out: List[Notification] = []
+def _dedup_notifications(notes: list[Notification]) -> list[Notification]:
+    seen: set[tuple[str, str, str]] = set()
+    out: list[Notification] = []
     for note in notes:
         key = (note.channel, note.target, note.message)
         if key not in seen:
@@ -1349,13 +1350,13 @@ def _dedup_notifications(notes: List[Notification]) -> List[Notification]:
 
 
 def applied_policy_overrides(
-    verdict: PolicyVerdict, changes: List[ColumnChange]
-) -> List[Dict[str, Any]]:
+    verdict: PolicyVerdict, changes: list[ColumnChange]
+) -> list[dict[str, Any]]:
     """Honored-override records derived from capped policy hits, in the SAME shape the default
     gate emits (``applied_overrides``). Cross-references ``ColumnChange.override`` for the verb /
     source_line / scope that ``RuleHit`` does not carry, so both report paths are uniform."""
     by_key = {(c.model.lower(), c.column.lower()): c for c in changes}
-    records: List[Dict[str, Any]] = []
+    records: list[dict[str, Any]] = []
     for hit in verdict.hits:
         if not hit.overridden:
             continue
@@ -1379,9 +1380,9 @@ def applied_policy_overrides(
 
 def ineffective_policy_overrides(
     verdict: PolicyVerdict,
-    changes: List[ColumnChange],
-    breaks: Optional[List[BreakFinding]] = None,
-) -> List[Dict[str, Any]]:
+    changes: list[ColumnChange],
+    breaks: list[BreakFinding] | None = None,
+) -> list[dict[str, Any]]:
     """Override records that landed on a real changed column but capped NO hit — surfaced so an
     ineffective pragma (e.g. allow-change on a break, or an override where no rule fired) is
     never silently ignored. Same shape as the default gate's ``ineffective_overrides``."""
@@ -1391,7 +1392,7 @@ def ineffective_policy_overrides(
         for h in verdict.hits
         if h.overridden
     }
-    records: List[Dict[str, Any]] = []
+    records: list[dict[str, Any]] = []
     for change in changes:
         if change.override is None:
             continue
@@ -1403,11 +1404,11 @@ def ineffective_policy_overrides(
 
 
 def evaluate_policy(
-    changes: List[ColumnChange],
-    changeset_impact: Dict[str, Any],
+    changes: list[ColumnChange],
+    changeset_impact: dict[str, Any],
     registry: Any,
     policy: Policy,
-    breaks: Optional[List[BreakFinding]] = None,
+    breaks: list[BreakFinding] | None = None,
     metabase_reach: Any = None,
 ) -> PolicyVerdict:
     """One-call helper can wire into ``cli/main.py``: build the indexes and evaluate.

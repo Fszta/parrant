@@ -34,8 +34,12 @@ def test_column_precise_dashboard_names_the_affected_field():
                     "precision": "column",
                     "via_cards": [128],
                     "via_columns": [
-                        {"model": "dim_accounts", "column": "balance", "card_id": 128,
-                         "role": "field"},
+                        {
+                            "model": "dim_accounts",
+                            "column": "balance",
+                            "card_id": 128,
+                            "role": "field",
+                        },
                     ],
                     "meta": {},
                 }

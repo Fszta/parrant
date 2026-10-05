@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from typing import Dict, Union, Set
+
 from parrant.models.schema import Column, ColumnLineage, Coverage
 
 
@@ -26,25 +26,18 @@ class LineageStaticDisplay(ABC):
     @abstractmethod
     def display_column_info(self, column: Column) -> None:
         """Display basic column information."""
-        pass
 
     @abstractmethod
-    def display_upstream(self, refs: Dict[str, Union[Dict[str, ColumnLineage], Set[str]]]) -> None:
+    def display_upstream(self, refs: dict[str, dict[str, ColumnLineage] | set[str]]) -> None:
         """Display upstream lineage."""
-        pass
 
     @abstractmethod
-    def display_downstream(
-        self, refs: Dict[str, Union[Dict[str, ColumnLineage], Set[str]]]
-    ) -> None:
+    def display_downstream(self, refs: dict[str, dict[str, ColumnLineage] | set[str]]) -> None:
         """Display downstream lineage."""
-        pass
 
     def display_coverage(self, coverage: Coverage) -> None:
         """Render a coverage statement. Default no-op; text/json override."""
-        pass
 
     @abstractmethod
     def save(self) -> None:
         """Save or finalize the display output."""
-        pass

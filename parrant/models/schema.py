@@ -1,7 +1,7 @@
 from enum import Enum
+from typing import Any, Literal, Optional
 
-from pydantic import BaseModel, Field, ConfigDict, model_validator
-from typing import List, Optional, Set, Dict, Literal, Any
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class OverrideVerb(str, Enum):
@@ -33,16 +33,16 @@ class OverrideDirective(BaseModel):
 
     verb: OverrideVerb
     # Lowercased target column. ``None`` => model scope OR an unresolved line-adjacency.
-    column: Optional[str] = None
+    column: str | None = None
     reason: str
     # ``model`` when no column arg and the pragma precedes the first SELECT; ``column`` otherwise.
     scope: Literal["column", "model"]
     # 1-indexed line within the scanned (compiled) head SQL — NOTE: compiled-relative.
     source_line: int
     # Set by the changeset builder once it knows which model this SQL belongs to.
-    model: Optional[str] = None
+    model: str | None = None
 
-    def to_record(self) -> Dict[str, Any]:
+    def to_record(self) -> dict[str, Any]:
         """The report dict skeleton for an override record (stale / applied / ineffective)."""
         return {
             "model": self.model,
@@ -80,8 +80,8 @@ class ArtifactStamp(BaseModel):
     missing on hand-crafted or truncated artifacts, in which case no identity claim is made.
     """
 
-    generated_at: Optional[str] = None
-    invocation_id: Optional[str] = None
+    generated_at: str | None = None
+    invocation_id: str | None = None
 
 
 class ArtifactStamps(BaseModel):
@@ -125,10 +125,10 @@ class SemanticDiff(BaseModel):
 
 
 class ColumnLineage(BaseModel):
-    source_columns: Set[str]
+    source_columns: set[str]
     transformation_type: Literal["direct", "renamed", "derived"]
-    sql_expression: Optional[str] = None
-    description: Optional[str] = None
+    sql_expression: str | None = None
+    description: str | None = None
 
 
 class UnresolvedColumnEdge(BaseModel):
@@ -160,16 +160,16 @@ class UnresolvedColumnEdge(BaseModel):
         "pivot_output",
         "other",
     ]
-    detail: Optional[str] = None
+    detail: str | None = None
 
 
 class Column(BaseModel):
     name: str
     model_name: str
-    description: Optional[str] = None
-    data_type: Optional[str] = None
-    lineage: Optional[List[ColumnLineage]] = Field(default_factory=list)  # type: ignore
-    metadata: Optional[Dict[str, Any]] = None
+    description: str | None = None
+    data_type: str | None = None
+    lineage: list[ColumnLineage] | None = Field(default_factory=list)  # type: ignore
+    metadata: dict[str, Any] | None = None
 
     @property
     def full_name(self) -> str:
@@ -179,13 +179,13 @@ class Column(BaseModel):
 class Exposure(BaseModel):
     name: str
     type: str
-    url: Optional[str] = None
-    description: Optional[str] = None
-    owner: Optional[Dict[str, Any]] = None
+    url: str | None = None
+    description: str | None = None
+    owner: dict[str, Any] | None = None
     unique_id: str
-    depends_on_models: Set[str] = Field(default_factory=set)
-    resource_path: Optional[str] = None
-    metadata: Optional[Dict[str, Any]] = None
+    depends_on_models: set[str] = Field(default_factory=set)
+    resource_path: str | None = None
+    metadata: dict[str, Any] | None = None
 
 
 class TestNode(BaseModel):
@@ -205,16 +205,16 @@ class TestNode(BaseModel):
     test_name: str
     # The model the test is attached to (lowercased). ``None`` when it cannot be
     # attributed honestly (e.g. a singular/custom test with no clear model).
-    target_model: Optional[str] = None
+    target_model: str | None = None
     # The column under test (lowercased). ``None`` for tests with no column (e.g.
     # a model-level test) — never guessed.
-    target_column: Optional[str] = None
+    target_column: str | None = None
     # For ``relationships`` tests: the referenced ("parent") side. ``referenced_model``
     # comes from ``kwargs.to`` (a ``ref(...)``), ``referenced_column`` from ``kwargs.field``.
-    referenced_model: Optional[str] = None
-    referenced_column: Optional[str] = None
+    referenced_model: str | None = None
+    referenced_column: str | None = None
     # ``original_file_path`` — the ``file:line`` the reviewer would open to fix it.
-    resource_path: Optional[str] = None
+    resource_path: str | None = None
 
 
 class BreakFinding(BaseModel):
@@ -238,7 +238,7 @@ class BreakFinding(BaseModel):
     # through its *referenced* (parent) side rather than its own target column.
     test_name: str
     test_unique_id: str
-    resource_path: Optional[str] = None
+    resource_path: str | None = None
     via_reference: bool = False
 
     def code(self) -> str:
@@ -248,7 +248,7 @@ class BreakFinding(BaseModel):
 
 class ModelDependency(BaseModel):
     model_name: str
-    depends_on: Set[str]
+    depends_on: set[str]
 
 
 class Model(BaseModel):
@@ -257,41 +257,41 @@ class Model(BaseModel):
     name: str
     schema_name: str = Field(alias="schema")  # Handle base model shadow attribute `schema`
     database: str
-    columns: Dict[str, Column] = Field(default_factory=dict)
-    metadata: Optional[Dict[str, Any]] = None
-    unique_id: Optional[str] = None
-    upstream: Set[str] = Field(default_factory=set)
-    downstream: Set[str] = Field(default_factory=set)
+    columns: dict[str, Column] = Field(default_factory=dict)
+    metadata: dict[str, Any] | None = None
+    unique_id: str | None = None
+    upstream: set[str] = Field(default_factory=set)
+    downstream: set[str] = Field(default_factory=set)
     # Upstream columns this model uses only in predicates (WHERE / JOIN / HAVING / QUALIFY).
-    predicate_sources: Set[str] = Field(default_factory=set)
+    predicate_sources: set[str] = Field(default_factory=set)
     # Upstream column -> the predicate condition text it appears in.
-    predicate_lineage: Dict[str, str] = Field(default_factory=dict)
-    compiled_sql: Optional[str] = None
-    language: Optional[str] = None
+    predicate_lineage: dict[str, str] = Field(default_factory=dict)
+    compiled_sql: str | None = None
+    language: str | None = None
     resource_type: Literal["model", "source", "seed", "test", "exposure", "snapshot"]
-    resource_path: Optional[str] = None
-    source_identifier: Optional[str] = None
-    source_name: Optional[str] = None
-    description: Optional[str] = None
-    tags: List[str] = Field(default_factory=list)
+    resource_path: str | None = None
+    source_identifier: str | None = None
+    source_name: str | None = None
+    description: str | None = None
+    tags: list[str] = Field(default_factory=list)
 
 
 class SQLParseResult(BaseModel):
-    column_lineage: Dict[str, List[ColumnLineage]]
-    star_sources: Set[str] = Field(default_factory=set)
+    column_lineage: dict[str, list[ColumnLineage]]
+    star_sources: set[str] = Field(default_factory=set)
     # Upstream columns referenced only in predicates (WHERE / JOIN ON / HAVING / QUALIFY),
     # never projected. A change to one of these alters this model's row-set (and therefore
     # its aggregates), so it is a real — if indirect — downstream impact.
-    predicate_sources: Set[str] = Field(default_factory=set)
+    predicate_sources: set[str] = Field(default_factory=set)
     # Upstream column -> the predicate condition text it appears in (the "why" for the
     # row-set impact, e.g. ``status = 'flagged'``).
-    predicate_lineage: Dict[str, str] = Field(default_factory=dict)
+    predicate_lineage: dict[str, str] = Field(default_factory=dict)
     # Columns whose upstream source parrant could not genuinely resolve — a phantom flatten
     # alias, a quoted pivot literal, a ``select * rename`` output, or a ``select *`` off an
     # unresolvable relation. The parser emits these INSTEAD of fabricating a source column, so
     # the set is complete and uncapped (display layers may cap; the machine surface must not).
     # ``model`` is left empty here (the parser has no model name); the registry stamps it.
-    unresolved_edges: List[UnresolvedColumnEdge] = Field(default_factory=list)
+    unresolved_edges: list[UnresolvedColumnEdge] = Field(default_factory=list)
 
 
 class Coverage(BaseModel):
@@ -301,15 +301,15 @@ class Coverage(BaseModel):
     parse_failed: int
     skipped_no_sql: int
     not_in_catalog_count: int
-    failed_models: List[str] = Field(default_factory=list)
-    skipped_models: List[str] = Field(default_factory=list)
+    failed_models: list[str] = Field(default_factory=list)
+    skipped_models: list[str] = Field(default_factory=list)
     # Nodes whose compiled SQL the parser cannot read and that we deliberately do NOT
     # analyze at the column level (semantic views chief among them; more generally any
     # unparseable node). These are NOT a coverage failure — we chose not to parse them, so
     # they are excluded from the ``complete`` denominator and never counted as ``parse_failed``.
     # Model-level reach through them is still preserved from the manifest dependency graph.
     opaque: int = 0
-    opaque_models: List[str] = Field(default_factory=list)
+    opaque_models: list[str] = Field(default_factory=list)
     complete: bool
 
 
@@ -333,8 +333,8 @@ class ImpactConfidence(BaseModel):
     # len(parse_failed_models) == parse_failed always hold in machine output.
     # Display layers (markdown) cap the rendered names and set the *_truncated flags
     # below; the integer counts above remain the source of truth for totals.
-    no_column_info_models: List[str] = Field(default_factory=list)
-    parse_failed_models: List[str] = Field(default_factory=list)
+    no_column_info_models: list[str] = Field(default_factory=list)
+    parse_failed_models: list[str] = Field(default_factory=list)
     # Reachable models that DO expose columns but carry at least one unresolved-edge marker
     # (a phantom flatten alias, a quoted pivot literal, a ``select * rename`` output, or a
     # ``select *`` off an unresolvable relation — see :class:`UnresolvedColumnEdge`). Unlike
@@ -344,7 +344,7 @@ class ImpactConfidence(BaseModel):
     # ``partial`` (which widens the rebuild). COMPLETE, uncapped machine list — a fail-closed
     # consumer force-rebuilds every one, so len(partial_edges_models) == partial_edges always.
     partial_edges: int = 0
-    partial_edges_models: List[str] = Field(default_factory=list)
+    partial_edges_models: list[str] = Field(default_factory=list)
     # Reachable nodes we deliberately do NOT analyze at the column level: their compiled SQL
     # is unparseable (semantic views chief among them; generally any node the parser cannot
     # read). Distinct from ``parse_failed`` (a node we *tried* and failed to derive lineage
@@ -355,14 +355,14 @@ class ImpactConfidence(BaseModel):
     # column edges through them, so we widen the rebuild rather than prove anything skippable).
     # COMPLETE, uncapped machine list — len(opaque_models) == opaque always in machine output.
     opaque: int = 0
-    opaque_models: List[str] = Field(default_factory=list)
+    opaque_models: list[str] = Field(default_factory=list)
     # Changed models whose model-level logic diff was IMPOSSIBLE (compiled SQL unavailable on a
     # side — see ``LogicDiffStatus``). "No logic change" was unprovable for them, so their
     # presence drops ``level`` to ``partial`` (which widens the rebuild selection): nothing
     # downstream of an un-diffable model may be proven safe to skip. COMPLETE, uncapped machine
     # list — len(indeterminate_logic_models) == indeterminate_logic always in machine output.
     indeterminate_logic: int = 0
-    indeterminate_logic_models: List[str] = Field(default_factory=list)
+    indeterminate_logic_models: list[str] = Field(default_factory=list)
     # Display-only truncation signals: False in machine output (lists are complete),
     # set True only by a display layer when it elided names from the rendered list.
     no_column_info_truncated: bool = False
@@ -390,10 +390,10 @@ class Selection(BaseModel):
     # and exits green): branch on this, never on the selector string's emptiness.
     has_rebuild: bool = False
     # Sorted, deduplicated dbt node names that must be rebuilt.
-    rebuild_models: List[str] = Field(default_factory=list)
+    rebuild_models: list[str] = Field(default_factory=list)
     # Sorted reachable complement — reached only by an additive/passthrough change at full
     # confidence. Informational: the consumer decides whether to actually skip these.
-    skippable_models: List[str] = Field(default_factory=list)
+    skippable_models: list[str] = Field(default_factory=list)
     # Space-joined ``rebuild_models`` — a drop-in for ``dbt build --select $(...)``.
     # Empty string exactly when ``has_rebuild`` is False.
     rebuild_selector: str = ""
@@ -430,7 +430,7 @@ class ModelResolution(BaseModel):
     # For a ``partial_edges`` status it is the marker construct (phantom_alias, unexpandable_star,
     # fabricated_column, star_rename, pivot_output, other). For an ``opaque`` status it names WHY
     # we did not parse it (``semantic_view`` or the general ``unparseable_sql``).
-    reason: Optional[str] = None
+    reason: str | None = None
 
 
 class ResolutionReasonCount(BaseModel):
@@ -471,7 +471,7 @@ class ResolutionSummary(BaseModel):
     # rebuild volume is driven by unresolved models rather than proven changes.
     rebuild_forced_by_nonresolution: int = 0
     # Coarse reasons ranked by frequency (advisory): the ranked resolution-gap backlog.
-    top_reasons: List[ResolutionReasonCount] = Field(default_factory=list)
+    top_reasons: list[ResolutionReasonCount] = Field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------
@@ -492,10 +492,10 @@ class MetabaseProvenance(BaseModel):
 
     generated_at: str  # ISO-8601 UTC — stamps snapshot age
     metabase_base_url: str
-    metabase_version: Optional[str] = None
-    database_ids: List[int] = Field(default_factory=list)
+    metabase_version: str | None = None
+    database_ids: list[int] = Field(default_factory=list)
     extractor_version: str
-    dbt_adapter: Optional[str] = None  # dialect the native resolver parsed with
+    dbt_adapter: str | None = None  # dialect the native resolver parsed with
 
 
 class MetabaseCoverage(BaseModel):
@@ -511,8 +511,8 @@ class MetabaseCoverage(BaseModel):
     cards_unresolved: int  # no warehouse relation resolved at all
     dashboards_total: int
     snippets_total: int
-    unresolved_card_ids: List[int] = Field(default_factory=list)  # capped honesty sample
-    table_only_card_ids: List[int] = Field(default_factory=list)
+    unresolved_card_ids: list[int] = Field(default_factory=list)  # capped honesty sample
+    table_only_card_ids: list[int] = Field(default_factory=list)
 
 
 class MetabaseRelation(BaseModel):
@@ -560,23 +560,23 @@ class MetabaseCard(BaseModel):
     name: str
     query_kind: Literal["mbql", "native"]
     precision: Literal["column", "table", "none"]
-    collection_id: Optional[int] = None
+    collection_id: int | None = None
     archived: bool = False
-    database_id: Optional[int] = None
-    columns: List[MetabaseColumnRef] = Field(default_factory=list)
-    table_relations: List[str] = Field(default_factory=list)  # relation keys, table grain
-    upstream_card_ids: List[int] = Field(default_factory=list)  # {{#id}} / card__<id> deps
-    snippet_ids: List[int] = Field(default_factory=list)
-    unresolved_reason: Optional[str] = None  # select_star | parse_failed | unknown_table | ...
+    database_id: int | None = None
+    columns: list[MetabaseColumnRef] = Field(default_factory=list)
+    table_relations: list[str] = Field(default_factory=list)  # relation keys, table grain
+    upstream_card_ids: list[int] = Field(default_factory=list)  # {{#id}} / card__<id> deps
+    snippet_ids: list[int] = Field(default_factory=list)
+    unresolved_reason: str | None = None  # select_star | parse_failed | unknown_table | ...
     # snapshot-time last-modified stamp (ISO-8601 UTC), used for incremental reuse
-    updated_at: Optional[str] = None
+    updated_at: str | None = None
     # Asset metadata — a deep link to the card and human/ownership context, so a reached card
     # in impact/explorer output is clickable and attributable. All best-effort (None if absent).
-    url: Optional[str] = None  # {base}/question/{card_id}
-    description: Optional[str] = None
-    collection_name: Optional[str] = None
-    creator: Optional[str] = None  # email (else display name) of the card's creator
-    last_edited_by: Optional[str] = None  # email/name from Metabase's last-edit-info
+    url: str | None = None  # {base}/question/{card_id}
+    description: str | None = None
+    collection_name: str | None = None
+    creator: str | None = None  # email (else display name) of the card's creator
+    last_edited_by: str | None = None  # email/name from Metabase's last-edit-info
 
 
 class MetabaseDashboard(BaseModel):
@@ -592,17 +592,17 @@ class MetabaseDashboard(BaseModel):
 
     dashboard_id: int
     name: str
-    collection_id: Optional[int] = None
-    url: Optional[str] = None
-    card_ids: List[int] = Field(default_factory=list)
-    meta: Dict[str, Any] = Field(default_factory=dict)  # tier/owner/... for policy reach.where
+    collection_id: int | None = None
+    url: str | None = None
+    card_ids: list[int] = Field(default_factory=list)
+    meta: dict[str, Any] = Field(default_factory=dict)  # tier/owner/... for policy reach.where
     # snapshot-time last-modified stamp (ISO-8601 UTC), used for incremental reuse
-    updated_at: Optional[str] = None
+    updated_at: str | None = None
     # Asset metadata (best-effort; None if absent). ``url`` is already populated above.
-    description: Optional[str] = None
-    collection_name: Optional[str] = None
-    creator: Optional[str] = None  # email (else display name) of the dashboard's creator
-    last_edited_by: Optional[str] = None
+    description: str | None = None
+    collection_name: str | None = None
+    creator: str | None = None  # email (else display name) of the dashboard's creator
+    last_edited_by: str | None = None
 
 
 class MetabaseLineage(BaseModel):
@@ -619,9 +619,9 @@ class MetabaseLineage(BaseModel):
     schema_version: int = 2
     provenance: MetabaseProvenance
     coverage: MetabaseCoverage
-    relations: Dict[str, MetabaseRelation] = Field(default_factory=dict)
-    cards: List[MetabaseCard] = Field(default_factory=list)
-    dashboards: List[MetabaseDashboard] = Field(default_factory=list)
+    relations: dict[str, MetabaseRelation] = Field(default_factory=dict)
+    cards: list[MetabaseCard] = Field(default_factory=list)
+    dashboards: list[MetabaseDashboard] = Field(default_factory=list)
 
 
 # ===========================================================================
@@ -738,7 +738,7 @@ class ChangeCondition(BaseModel):
 
     field: Literal["kind", "semantic", "breaking", "model", "column"]
     op: Operator
-    value: Optional[Any] = None
+    value: Any | None = None
 
 
 class MetaCondition(BaseModel):
@@ -746,7 +746,7 @@ class MetaCondition(BaseModel):
 
     key: str
     op: Operator
-    value: Optional[Any] = None
+    value: Any | None = None
 
 
 class ReachCondition(BaseModel):
@@ -758,7 +758,7 @@ class ReachCondition(BaseModel):
     """
 
     kind: ReachKind
-    mechanism: Optional[List[Mechanism]] = None
+    mechanism: list[Mechanism] | None = None
     where: "Predicate"
     # ge=1: min_count 0 is a vacuously-true reach (matches with zero reached objects), which is
     # never a meaningful gate — reject it at config load rather than silently always-firing.
@@ -782,23 +782,23 @@ class Predicate(BaseModel):
     ``config`` / ``reach`` / ``structural``. The one-of invariant is enforced by a model validator.
     """
 
-    all_: Optional[List["Predicate"]] = Field(default=None, alias="all")
-    any_: Optional[List["Predicate"]] = Field(default=None, alias="any")
+    all_: list["Predicate"] | None = Field(default=None, alias="all")
+    any_: list["Predicate"] | None = Field(default=None, alias="any")
     not_: Optional["Predicate"] = Field(default=None, alias="not")
-    change: Optional[ChangeCondition] = None
-    meta: Optional[MetaCondition] = None
+    change: ChangeCondition | None = None
+    meta: MetaCondition | None = None
     # ``inferred_meta`` shares ``MetaCondition``'s shape (key/op/value) but resolves the key's
     # value by folding UPSTREAM lineage rather than reading only the node's own declared meta —
     # see ``inferred_meta`` in ``lineage/policy.py``. An unresolvable value is UNKNOWN (fail-safe).
-    inferred_meta: Optional[MetaCondition] = None
+    inferred_meta: MetaCondition | None = None
     # ``config`` shares ``MetaCondition``'s shape (key/op/value) but resolves the DOTTED key
     # against the subject model's resolved dbt ``node.config`` (``grants.select``,
     # ``materialized``, ``tags`` …) rather than user ``meta``. Model-grained. A missing dotted
     # path resolves to the EMPTY SET for set operators (present, not unknown) and to
     # UNKNOWN_MISSING for scalar operators — see ``config`` in ``lineage/policy.py``.
-    config: Optional[MetaCondition] = None
-    reach: Optional[ReachCondition] = None
-    structural: Optional[StructuralCondition] = None
+    config: MetaCondition | None = None
+    reach: ReachCondition | None = None
+    structural: StructuralCondition | None = None
 
     model_config = ConfigDict(populate_by_name=True)
 
@@ -836,10 +836,10 @@ class Action(BaseModel):
 
     type: ActionKind
     include: Literal["reached", "subject", "both"] = "reached"
-    mechanism: Optional[List[Mechanism]] = None
-    channel: Optional[str] = None
-    target: Optional[str] = None
-    message: Optional[str] = None
+    mechanism: list[Mechanism] | None = None
+    channel: str | None = None
+    target: str | None = None
+    message: str | None = None
 
 
 # --- rule + policy ---------------------------------------------------------
@@ -849,15 +849,15 @@ class Rule(BaseModel):
     """A single ``predicate -> actions`` rule."""
 
     id: str
-    description: Optional[str] = None
+    description: str | None = None
     scope: Literal["change", "aggregate"] = "change"
     predicate: Predicate
-    action: List[Action]
+    action: list[Action]
     # Two independent fail-safe knobs: on_missing_meta governs an undecidable leaf
     # caused by a missing meta key / unresolved reach; on_error governs an operator/type
     # mismatch (a genuine evaluation error). Each falls back to the matching PolicyDefaults knob.
-    on_missing_meta: Optional[MissingMetaPolicy] = None
-    on_error: Optional[MissingMetaPolicy] = None
+    on_missing_meta: MissingMetaPolicy | None = None
+    on_error: MissingMetaPolicy | None = None
 
     @model_validator(mode="before")
     @classmethod
@@ -882,8 +882,8 @@ class PolicyDefaults(BaseModel):
 
     on_missing_meta: MissingMetaPolicy = MissingMetaPolicy.FAIL_CLOSED
     on_error: MissingMetaPolicy = MissingMetaPolicy.FAIL_CLOSED
-    on_meaning_changed: Optional[GateDecision] = None
-    on_indeterminate: Optional[GateDecision] = None
+    on_meaning_changed: GateDecision | None = None
+    on_indeterminate: GateDecision | None = None
     # Opt-in (default OFF, byte-identical behavior when unset): makes ``fail_closed`` apply to
     # NON-BLOCKING rules too. A warn rule whose predicate stays UNKNOWN under a fail_closed knob
     # then FIRES at its declared severity (a normal warn hit marked ``fired_on_unknown``) instead
@@ -898,7 +898,7 @@ class Policy(BaseModel):
 
     version: int
     defaults: PolicyDefaults = Field(default_factory=PolicyDefaults)
-    rules: List[Rule] = Field(default_factory=list)
+    rules: list[Rule] = Field(default_factory=list)
 
 
 # --- outputs ---------------------------------------------------------------
@@ -917,16 +917,16 @@ class RuleHit(BaseModel):
 
     rule_id: str
     decision: GateDecision
-    change_model: Optional[str] = None
-    change_column: Optional[str] = None
-    matched_reach: List[str] = Field(default_factory=list)
-    actions: List[ActionKind] = Field(default_factory=list)
+    change_model: str | None = None
+    change_column: str | None = None
+    matched_reach: list[str] = Field(default_factory=list)
+    actions: list[ActionKind] = Field(default_factory=list)
     # override cap (backward-compatible): when an override pragma capped this hit,
     # ``decision`` holds the effective/capped value (so ``_combine_decision`` needs no change)
     # while ``original_decision`` keeps the pre-cap value so the report can show the delta.
     overridden: bool = False
-    original_decision: Optional[GateDecision] = None
-    override_reason: Optional[str] = None
+    original_decision: GateDecision | None = None
+    override_reason: str | None = None
     # the backtest trust signal (backward-compatible, default False keeps serialization additive):
     # True when this hit fired via a *fail-safe UNKNOWN* resolution (a blocking rule under
     # ``fail_closed`` firing on an undecidable predicate) rather than a proven TRUE match. This is
@@ -935,7 +935,7 @@ class RuleHit(BaseModel):
     # proven) nor perturbed by override caps. ``unknown_cause`` splits missing-vs-error for the
     # drill-down; the bool is the primary signal.
     fired_on_unknown: bool = False
-    unknown_cause: Optional[Literal["missing", "error"]] = None
+    unknown_cause: Literal["missing", "error"] | None = None
 
 
 class UnprovenPolicyHit(BaseModel):
@@ -951,22 +951,22 @@ class UnprovenPolicyHit(BaseModel):
     """
 
     rule_id: str
-    change_model: Optional[str] = None
-    change_column: Optional[str] = None
+    change_model: str | None = None
+    change_column: str | None = None
     unknown_cause: Literal["missing", "error"]
     # The leaf conditions that resolved UNKNOWN while this rule was evaluated, as compact
     # ``axis.key`` labels (e.g. ``meta.pii``, ``reach.exposure``) — the "what to tag" pointer.
-    unknown_leaves: List[str] = Field(default_factory=list)
+    unknown_leaves: list[str] = Field(default_factory=list)
 
 
 class PolicyVerdict(BaseModel):
     """The engine's output: a gate decision + accumulated build/test sets + notifications."""
 
     decision: GateDecision
-    hits: List[RuleHit] = Field(default_factory=list)
-    build_set: List[str] = Field(default_factory=list)
-    test_set: List[str] = Field(default_factory=list)
-    notifications: List[Notification] = Field(default_factory=list)
+    hits: list[RuleHit] = Field(default_factory=list)
+    build_set: list[str] = Field(default_factory=list)
+    test_set: list[str] = Field(default_factory=list)
+    notifications: list[Notification] = Field(default_factory=list)
     evaluated_rules: int = 0
     fired_rules: int = 0
     # Honesty counters for fail-safe explainability (additive; see policy.py §7).
@@ -975,7 +975,7 @@ class PolicyVerdict(BaseModel):
     # Suppressed-unknown telemetry (additive; issue #124): warn-rule conditions that a
     # fail_closed knob WOULD have fired were the rule blocking. ``unproven_count`` mirrors
     # ``len(unproven)`` for one-glance consumers of the JSON verdict.
-    unproven: List[UnprovenPolicyHit] = Field(default_factory=list)
+    unproven: list[UnprovenPolicyHit] = Field(default_factory=list)
     unproven_count: int = 0
 
     def blocks(self) -> bool:
@@ -1007,8 +1007,8 @@ class MetabaseReachConfidence(BaseModel):
     warning"; it never fabricates dashboard reach.
     """
 
-    snapshot_generated_at: Optional[str] = None
-    snapshot_age_hours: Optional[float] = None
+    snapshot_generated_at: str | None = None
+    snapshot_age_hours: float | None = None
     stale: bool = False  # age > threshold OR artifact missing
     dashboards_reached: int = 0
     cards_column_precise: int = 0  # reached via a column-precise card
@@ -1065,21 +1065,21 @@ class BacktestPointResult(BaseModel):
     source: str  # human label for the changeset source (e.g. "git-diff (<sha>^..<sha>)")
     total_changes: int
     unmapped_changes: int = 0  # .sql paths that mapped to no model in the HEAD registry
-    parse_failures: List[str] = Field(default_factory=list)
+    parse_failures: list[str] = Field(default_factory=list)
     decision: str  # allow / warn / block
     blast_radius: int = 0
-    fired: List[BacktestFiredHit] = Field(default_factory=list)
-    sample_reach: List[str] = Field(default_factory=list)
+    fired: list[BacktestFiredHit] = Field(default_factory=list)
+    sample_reach: list[str] = Field(default_factory=list)
     # --- selection measurement (pure observation of the per-point Selection block) ---
     # ``None`` for points replayed without a selection (a failed replay, or a service that
     # produced no selection block); such points are excluded from the aggregate stats.
-    selection_widened: Optional[bool] = None  # Selection.widened_to_all_reachable
-    skippable_models_count: Optional[int] = None  # len(Selection.skippable_models)
+    selection_widened: bool | None = None  # Selection.widened_to_all_reachable
+    skippable_models_count: int | None = None  # len(Selection.skippable_models)
     # ResolutionSummary.rebuild_forced_by_nonresolution for this point (rebuilds forced
     # because parrant could not resolve the model, not by a proven reaching change).
-    rebuild_forced_by_nonresolution: Optional[int] = None
+    rebuild_forced_by_nonresolution: int | None = None
     # ResolutionSummary.top_reasons flattened to {reason -> count} for cross-point aggregation.
-    resolution_reasons: Dict[str, int] = Field(default_factory=dict)
+    resolution_reasons: dict[str, int] = Field(default_factory=dict)
 
 
 class BacktestSelectionStats(BaseModel):
@@ -1103,7 +1103,7 @@ class BacktestSelectionStats(BaseModel):
     rebuild_forced_by_nonresolution_total: int = 0
     # Cross-point roll-up of the per-point resolution reasons, ranked by frequency: the
     # widening/forcing-reason backlog (which resolution gaps drive the widen rate).
-    top_reasons: List[ResolutionReasonCount] = Field(default_factory=list)
+    top_reasons: list[ResolutionReasonCount] = Field(default_factory=list)
 
 
 class BacktestReport(BaseModel):
@@ -1116,21 +1116,21 @@ class BacktestReport(BaseModel):
 
     mode: Literal["git-diff", "changesets"]
     policy_source: str
-    base: Optional[str] = None
-    head: Optional[str] = None
+    base: str | None = None
+    head: str | None = None
     prs_replayed: int = 0
     prs_would_block: int = 0
     prs_would_warn: int = 0
     prs_skipped: int = 0  # points whose impact could not be computed (parse failures / errors)
     avg_blast_radius: float = 0.0
-    rule_stats: List[BacktestRuleStat] = Field(default_factory=list)
-    points: List[BacktestPointResult] = Field(default_factory=list)
+    rule_stats: list[BacktestRuleStat] = Field(default_factory=list)
+    points: list[BacktestPointResult] = Field(default_factory=list)
     fidelity_note: str = ""
-    warnings: List[str] = Field(default_factory=list)
-    baseline_delta: Optional[Dict[str, Any]] = None
+    warnings: list[str] = Field(default_factory=list)
+    baseline_delta: dict[str, Any] | None = None
     # Aggregate selection widen-rate statistics (measurement only). ``None`` when no replayed
     # point carried a selection block, so an absent surface is never mistaken for a zero rate.
-    selection_stats: Optional[BacktestSelectionStats] = None
+    selection_stats: BacktestSelectionStats | None = None
 
 
 # ===========================================================================
@@ -1187,8 +1187,8 @@ class PolicyInitScan(BaseModel):
     # config-axis (PII over-grant) template, so it is only offered when dbt grants actually exist.
     models_with_grants: int = 0
     # Sorted by n_present desc, then key (stable, most-covered-first).
-    model_meta_keys: List[MetaKeyCoverage] = Field(default_factory=list)
-    column_meta_keys: List[MetaKeyCoverage] = Field(default_factory=list)
+    model_meta_keys: list[MetaKeyCoverage] = Field(default_factory=list)
+    column_meta_keys: list[MetaKeyCoverage] = Field(default_factory=list)
 
     @property
     def tests_present(self) -> bool:
@@ -1221,6 +1221,6 @@ class GitScopeStatus(BaseModel):
 
     base: str
     applied: bool
-    changed_models: List[str] = Field(default_factory=list)
-    unmappable_files: List[str] = Field(default_factory=list)
-    reason: Optional[str] = None
+    changed_models: list[str] = Field(default_factory=list)
+    unmappable_files: list[str] = Field(default_factory=list)
+    reason: str | None = None

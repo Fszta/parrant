@@ -795,11 +795,12 @@ def test_complex_query_structure():
 
 def test_table_names_normalized_from_sql() -> None:
     """Test that table names extracted from SQL are normalized to lowercase."""
+    from sqlglot import exp, parse_one
+
     from parrant.parser.sql_parser_utils import (
-        get_table_context,
         get_all_tables_from_select,
+        get_table_context,
     )
-    from sqlglot import parse_one, exp
 
     # Test with uppercase table names (Snowflake style)
     sql = "SELECT * FROM RAW_ORDERS_TABLE"
@@ -974,7 +975,7 @@ def test_comments_in_join_condition() -> None:
     assert "order_id" in lineage
 
     # All source columns should be clean
-    for col_name, lineage_list in lineage.items():
+    for lineage_list in lineage.values():
         for lineage_item in lineage_list:
             for src in lineage_item.source_columns:
                 assert "/*" not in src and "*/" not in src
@@ -1053,7 +1054,7 @@ def test_comments_in_complex_query() -> None:
     assert "order_id" in lineage
 
     # Verify all source columns are clean
-    for col_name, lineage_list in lineage.items():
+    for lineage_list in lineage.values():
         for lineage_item in lineage_list:
             for src in lineage_item.source_columns:
                 assert "/*" not in src and "*/" not in src

@@ -8,9 +8,10 @@ unit test against a fake client with zero live Metabase.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any, Callable, Dict, List, Optional, Set
+from typing import Any
 
 from parrant.metabase.client import MetabaseClient
 from parrant.metabase.resolvers import CardResolver, ResolvedCard
@@ -33,32 +34,32 @@ class ExtractConfig:
     """Inputs to :func:`run_extract` that are not the network client itself."""
 
     metabase_base_url: str
-    database_ids: List[int]
+    database_ids: list[int]
     extractor_version: str
-    dialect: Optional[str] = None
+    dialect: str | None = None
     include_archived: bool = False
     # Consumer-configurable dashboard meta mapping (spec Q8 /): the tool
     # never hardcodes an org's taxonomy. Shape:
     #   {"by_collection": {<collection_id>: {...}}, "by_dashboard": {<dashboard_id>: {...}}}
-    dashboard_meta: Dict[str, Dict[Any, Dict[str, Any]]] = field(default_factory=dict)
+    dashboard_meta: dict[str, dict[Any, dict[str, Any]]] = field(default_factory=dict)
     # A previously-loaded snapshot for incremental reuse. When provided, dashboards whose
     # Metabase ``updated_at`` matches the previous snapshot are reused rather than refetched
     # (the N+1 detail fetch is the expensive part at 500+ dashboards). ``None`` = full extract.
-    previous: Optional["MetabaseLineage"] = None
+    previous: MetabaseLineage | None = None
     # Concurrency for the dashboard detail fan-out (``client.get_dashboards``).
     max_workers: int = 8
 
 
 def build_dashboard_meta_resolver(
-    mapping: Dict[str, Dict[Any, Dict[str, Any]]],
-) -> Callable[[dict], Dict[str, Any]]:
+    mapping: dict[str, dict[Any, dict[str, Any]]],
+) -> Callable[[dict], dict[str, Any]]:
     """Turn the consumer mapping into ``dashboard_dict -> meta`` (per-dashboard overrides
     per-collection). Absent → ``{}``; the taxonomy is entirely the consumer's."""
     by_collection = {str(k): v for k, v in (mapping.get("by_collection") or {}).items()}
     by_dashboard = {str(k): v for k, v in (mapping.get("by_dashboard") or {}).items()}
 
-    def resolve(dashboard: dict) -> Dict[str, Any]:
-        meta: Dict[str, Any] = {}
+    def resolve(dashboard: dict) -> dict[str, Any]:
+        meta: dict[str, Any] = {}
         collection_id = dashboard.get("collection_id")
         if collection_id is not None and str(collection_id) in by_collection:
             meta.update(by_collection[str(collection_id)])
@@ -70,12 +71,12 @@ def build_dashboard_meta_resolver(
     return resolve
 
 
-def _dashcard_card_ids(dashboard: dict) -> List[int]:
+def _dashcard_card_ids(dashboard: dict) -> list[int]:
     """Collect card ids from a dashboard's ``dashcards`` (or legacy ``ordered_cards``)."""
     entries = dashboard.get("dashcards")
     if entries is None:
         entries = dashboard.get("ordered_cards") or []
-    ids: List[int] = []
+    ids: list[int] = []
     for entry in entries:
         card_id = entry.get("card_id")
         if not isinstance(card_id, int):
@@ -86,7 +87,7 @@ def _dashcard_card_ids(dashboard: dict) -> List[int]:
     return ids
 
 
-def _person(obj: Any) -> Optional[str]:
+def _person(obj: Any) -> str | None:
     """A human identifier from a Metabase ``creator`` / ``last-edit-info`` object.
 
     Prefers email (actionable for ownership routing), falls back to a display name; ``None``
@@ -100,7 +101,7 @@ def _person(obj: Any) -> Optional[str]:
     return name or None
 
 
-def _collection_name(obj: Any) -> Optional[str]:
+def _collection_name(obj: Any) -> str | None:
     """The name of an embedded Metabase ``collection`` object, if present."""
     if isinstance(obj, dict):
         name = obj.get("name")
@@ -147,9 +148,9 @@ def run_extract(config: ExtractConfig, client: MetabaseClient) -> MetabaseLineag
     # malformed card with no ``database`` (db is None) keeps the old behavior of being resolved.
     resolver = CardResolver(meta, corpus, config.dialect)
     scoped_db_ids = set(config.database_ids)
-    cards: List[MetabaseCard] = []
-    included_card_ids: Set[int] = set()
-    used_relations: Set[str] = set()
+    cards: list[MetabaseCard] = []
+    included_card_ids: set[int] = set()
+    used_relations: set[str] = set()
     for raw_card in raw_cards:
         if not isinstance(raw_card.get("id"), int):
             continue
@@ -180,7 +181,7 @@ def run_extract(config: ExtractConfig, client: MetabaseClient) -> MetabaseLineag
     prev_scope_matches = config.previous is not None and set(
         config.previous.provenance.database_ids
     ) == set(config.database_ids)
-    prev_by_id: Dict[int, MetabaseDashboard] = (
+    prev_by_id: dict[int, MetabaseDashboard] = (
         {d.dashboard_id: d for d in config.previous.dashboards}
         if config.previous is not None and prev_scope_matches
         else {}
@@ -188,9 +189,9 @@ def run_extract(config: ExtractConfig, client: MetabaseClient) -> MetabaseLineag
 
     # Decide reuse vs fetch per shell; a shell is reusable only when both its and the previous
     # snapshot's ``updated_at`` are present and equal (a missing stamp forces a refetch).
-    shells_by_id: Dict[int, dict] = {}
-    fetch_ids: List[int] = []
-    reused_ids: Set[int] = set()
+    shells_by_id: dict[int, dict] = {}
+    fetch_ids: list[int] = []
+    reused_ids: set[int] = set()
     for shell in shells:
         shell_id = shell.get("id")
         if not isinstance(shell_id, int):
@@ -210,7 +211,7 @@ def run_extract(config: ExtractConfig, client: MetabaseClient) -> MetabaseLineag
 
     details = client.get_dashboards(fetch_ids, max_workers=config.max_workers) if fetch_ids else {}
 
-    dashboards: List[MetabaseDashboard] = []
+    dashboards: list[MetabaseDashboard] = []
     for dashboard_id, shell in shells_by_id.items():
         if dashboard_id in reused_ids:
             # Reused = unchanged since the previous snapshot, so carry its asset metadata
@@ -254,7 +255,7 @@ def run_extract(config: ExtractConfig, client: MetabaseClient) -> MetabaseLineag
     dashboards.sort(key=lambda d: d.dashboard_id)
 
     # 4. Relations actually referenced (de-duplicated), + coverage + provenance.
-    relations: Dict[str, MetabaseRelation] = {
+    relations: dict[str, MetabaseRelation] = {
         key: rel for key, rel in meta.relations.items() if key in used_relations
     }
     coverage = _build_coverage(cards, dashboards, len(snippets))
@@ -276,7 +277,7 @@ def run_extract(config: ExtractConfig, client: MetabaseClient) -> MetabaseLineag
 
 
 def _build_coverage(
-    cards: List[MetabaseCard], dashboards: List[MetabaseDashboard], snippets_total: int
+    cards: list[MetabaseCard], dashboards: list[MetabaseDashboard], snippets_total: int
 ) -> MetabaseCoverage:
     column = sum(1 for c in cards if c.precision == "column")
     table_only = sum(1 for c in cards if c.precision == "table")

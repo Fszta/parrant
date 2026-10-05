@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Optional, Union
 
 from pydantic import ValidationError
 
@@ -32,7 +31,7 @@ class MetabaseArtifactError(Exception):
     """
 
 
-def load_metabase_lineage(path: Optional[Union[str, Path]]) -> Optional[MetabaseLineage]:
+def load_metabase_lineage(path: str | Path | None) -> MetabaseLineage | None:
     """Parse ``metabase_lineage.json``.
 
     Returns ``None`` when ``path`` is falsy or the file does not exist — the Metabase
@@ -64,7 +63,7 @@ def load_metabase_lineage(path: Optional[Union[str, Path]]) -> Optional[Metabase
         raise MetabaseArtifactError(f"Invalid Metabase artifact {file_path}: {exc}") from exc
 
 
-def dump_metabase_lineage(lineage: MetabaseLineage, path: Union[str, Path]) -> None:
+def dump_metabase_lineage(lineage: MetabaseLineage, path: str | Path) -> None:
     """Write ``lineage`` to ``path`` as JSON (by-alias, so ``schema`` is emitted for the
     relation's ``schema_name`` field), pretty-printed and stable for diff-friendly snapshots."""
     file_path = Path(path)

@@ -18,8 +18,6 @@ most wants to edit — so the two efforts don't collide.
 
 from __future__ import annotations
 
-from typing import List, Optional
-
 from parrant.artifacts.exceptions import ModelNotFoundError
 from parrant.artifacts.registry import ModelRegistry
 from parrant.lineage.provider import LineageAndMetadataProvider
@@ -35,7 +33,7 @@ class SqlglotLineageProvider(ModelRegistry):
     code or test that expects a registry keeps working.
     """
 
-    def get_column_lineage(self, model_name: str, column_name: str) -> List[ColumnLineage]:
+    def get_column_lineage(self, model_name: str, column_name: str) -> list[ColumnLineage]:
         """Per-column upstream edges for ``model.column`` (see the interface).
 
         Convenience over ``get_model(model).columns[column].lineage``; empty list when the
@@ -46,7 +44,7 @@ class SqlglotLineageProvider(ModelRegistry):
             return []
         return list(column.lineage or [])
 
-    def get_column(self, model_name: str, column_name: str) -> Optional[Column]:
+    def get_column(self, model_name: str, column_name: str) -> Column | None:
         """Column truth for ``model.column`` (case-insensitive), or ``None`` if unknown."""
         try:
             model = self.get_model(model_name)
@@ -55,7 +53,7 @@ class SqlglotLineageProvider(ModelRegistry):
         columns = model.columns
         return columns.get(column_name) or columns.get(column_name.lower())
 
-    def get_compiled_sql(self, model_name: str) -> Optional[str]:  # type: ignore[override]
+    def get_compiled_sql(self, model_name: str) -> str | None:  # type: ignore[override]
         """Compiled SQL for a model, or ``None`` when there is none.
 
         Softens ``ModelRegistry.get_compiled_sql`` (which raises ``ValueError`` /
@@ -72,7 +70,7 @@ class SqlglotLineageProvider(ModelRegistry):
 def build_sqlglot_provider(
     catalog_path: str,
     manifest_path: str,
-    adapter_override: Optional[str] = None,
+    adapter_override: str | None = None,
 ) -> LineageAndMetadataProvider:
     """Construct and :meth:`load` a SQLGlot-backed provider, ready to query.
 

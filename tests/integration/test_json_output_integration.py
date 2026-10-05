@@ -7,7 +7,6 @@ downstream impact rather than human-formatted text.
 
 import json
 
-import pytest
 from click.testing import CliRunner
 
 from parrant.cli.main import cli

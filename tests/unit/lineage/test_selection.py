@@ -8,7 +8,7 @@ honesty invariants (partition, the breaking contract, the widening branch, the e
 sentinel, and determinism).
 """
 
-from typing import Any, Dict, List, Optional, Set
+from typing import Any
 
 from parrant.lineage.changeset import ChangesetBuilder
 from parrant.lineage.service import build_selection
@@ -18,12 +18,12 @@ from tests.unit.test_lineage_provider import _service_on, _two_model_graph
 def _confidence(
     *,
     level: str = "full",
-    no_column_info_models: Optional[List[str]] = None,
-    parse_failed_models: Optional[List[str]] = None,
-    partial_edges_models: Optional[List[str]] = None,
+    no_column_info_models: list[str] | None = None,
+    parse_failed_models: list[str] | None = None,
+    partial_edges_models: list[str] | None = None,
     no_column_info_truncated: bool = False,
     parse_failed_truncated: bool = False,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     return {
         "level": level,
         "no_column_info_models": no_column_info_models or [],
@@ -37,11 +37,11 @@ def _confidence(
 def _change(
     *,
     kind: str,
-    semantic: Optional[str],
-    reached: Optional[List[str]] = None,
+    semantic: str | None,
+    reached: list[str] | None = None,
     resolved: bool = True,
-) -> Dict[str, Any]:
-    entry: Dict[str, Any] = {"kind": kind, "semantic": semantic, "resolved": resolved}
+) -> dict[str, Any]:
+    entry: dict[str, Any] = {"kind": kind, "semantic": semantic, "resolved": resolved}
     if reached is not None:
         entry["reached_models"] = [
             {"name": name, "mechanism": "direct_passthrough"} for name in reached
@@ -49,7 +49,7 @@ def _change(
     return entry
 
 
-def _assert_partition(selection: Dict[str, Any], universe: Set[str]) -> None:
+def _assert_partition(selection: dict[str, Any], universe: set[str]) -> None:
     """Every model in the universe has exactly one disposition — the headline invariant."""
     rebuild = set(selection["rebuild_models"])
     skippable = set(selection["skippable_models"])
@@ -200,7 +200,7 @@ def test_unresolved_change_still_rebuilds_its_own_model() -> None:
     # An unresolved change contributes no reach, but its edited model is in changed_models and so
     # is always rebuilt — the diff never silently drops a model it could not fan out.
     changed = {"orphan"}
-    reachable: Set[str] = set()
+    reachable: set[str] = set()
     by_change = [_change(kind="removed", semantic=None, resolved=False)]
     selection = build_selection(reachable, changed, by_change, _confidence())
 

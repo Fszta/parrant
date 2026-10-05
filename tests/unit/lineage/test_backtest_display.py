@@ -12,18 +12,18 @@ from parrant.models.schema import (
 
 
 def _report(rule_stats=None, **kwargs):
-    base = dict(
-        mode="git-diff",
-        policy_source="p.yml",
-        base="HEAD~3",
-        head="HEAD",
-        prs_replayed=3,
-        prs_would_block=1,
-        prs_would_warn=1,
-        avg_blast_radius=2.5,
-        rule_stats=rule_stats or [],
-        fidelity_note="NOTE: block tiers not exercised.",
-    )
+    base = {
+        "mode": "git-diff",
+        "policy_source": "p.yml",
+        "base": "HEAD~3",
+        "head": "HEAD",
+        "prs_replayed": 3,
+        "prs_would_block": 1,
+        "prs_would_warn": 1,
+        "avg_blast_radius": 2.5,
+        "rule_stats": rule_stats or [],
+        "fidelity_note": "NOTE: block tiers not exercised.",
+    }
     base.update(kwargs)
     return BacktestReport(**base)
 

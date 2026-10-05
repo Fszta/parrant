@@ -1,11 +1,10 @@
+import os
 import subprocess
 import sys
-import os
 from pathlib import Path
-from typing import Optional
 
 
-def run_tests(test_type: Optional[str] = None) -> int:
+def run_tests(test_type: str | None = None) -> int:
     """Run tests with pytest."""
     project_root = Path(__file__).parent.parent
     os.environ["PYTHONPATH"] = os.pathsep.join(

@@ -8,8 +8,6 @@ the reason taxonomy, the aggregate roll-up, and — most importantly — that th
 statuses reconcile exactly with the confidence counts and the rebuild/skippable sets.
 """
 
-from typing import Dict
-
 from parrant.lineage.changeset import ChangesetBuilder
 from parrant.lineage.service import build_resolution
 from parrant.models.schema import Column, ColumnLineage, Model
@@ -29,7 +27,7 @@ def _resolution_provider() -> InMemoryProvider:
     missing = _model("missing", {})
     py_model = _model("py_model", {}, language="python")
     broke = _model("broke", {})
-    models: Dict[str, Model] = {
+    models: dict[str, Model] = {
         "catalog_backed": catalog_model,
         "parsed": parsed_model,
         "star_cte": star_cte,

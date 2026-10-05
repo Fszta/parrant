@@ -12,7 +12,6 @@ from parrant.lineage.policy import parse_policy
 from parrant.lineage.policy_init import _flatten_meta_keys, _has_select_grant, emit_policy_yaml
 from parrant.models.schema import MetaKeyCoverage, PolicyInitScan
 
-
 # --- pure scan helpers -------------------------------------------------------
 
 

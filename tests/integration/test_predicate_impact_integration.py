@@ -63,8 +63,6 @@ def test_filter_only_consumer_surfaces_as_filter_severity(dbt_artifacts):
 
     # Changing a column it PROJECTS (account_id) is an ordinary value impact, not 'filter'.
     value_impact = service.get_column_impact("transactions", "account_id")
-    value_cols = [
-        c for c in value_impact["affected_columns"] if c["model"] == _FILTER_MODEL
-    ]
+    value_cols = [c for c in value_impact["affected_columns"] if c["model"] == _FILTER_MODEL]
     assert value_cols, "flagged_transaction_metrics projects account_id"
     assert all(c["severity"] != "filter" for c in value_cols), value_cols

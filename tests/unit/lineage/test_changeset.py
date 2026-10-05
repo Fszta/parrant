@@ -6,7 +6,6 @@ they run without dbt artifacts on disk.
 """
 
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Set
 
 import pytest
 
@@ -19,32 +18,31 @@ from parrant.lineage.changeset import (
     detect_structural_degradation,
     scope_changes_to_models,
 )
-from parrant.models.schema import ArtifactStamp, ArtifactStamps, SemanticChangeKind
 from parrant.lineage.display.markdown import render_changeset_markdown
 from parrant.lineage.service import LineageService
-
+from parrant.models.schema import ArtifactStamp, ArtifactStamps, SemanticChangeKind
 
 # --- stubs -----------------------------------------------------------------
 
 
 @dataclass
 class _Col:
-    data_type: Optional[str]
+    data_type: str | None
 
 
 @dataclass
 class _Model:
-    columns: Dict[str, _Col]
+    columns: dict[str, _Col]
     # Optional so existing stubs stay minimal; the missing-compiled-SQL indeterminate
     # pathway only applies to real model nodes, which always carry a resource_type.
-    resource_type: Optional[str] = None
+    resource_type: str | None = None
 
 
 @dataclass
 class _Lin:
     """Stand-in for ColumnLineage (the per-column derivation signature source)."""
 
-    source_columns: Set[str]
+    source_columns: set[str]
     transformation_type: str
     sql_expression: str
 
@@ -53,8 +51,8 @@ class _Lin:
 class _LinCol:
     """A column that also carries parsed per-column lineage, enabling a precise diff."""
 
-    data_type: Optional[str] = None
-    lineage: List[_Lin] = field(default_factory=list)
+    data_type: str | None = None
+    lineage: list[_Lin] = field(default_factory=list)
 
 
 class _FakeRegistry:
@@ -62,9 +60,9 @@ class _FakeRegistry:
 
     def __init__(
         self,
-        models: Dict[str, _Model],
-        compiled: Optional[Dict[str, str]] = None,
-        catalog_backed: Optional[set] = None,
+        models: dict[str, _Model],
+        compiled: dict[str, str] | None = None,
+        catalog_backed: set | None = None,
     ):
         self._models = models
         self._compiled = compiled or {}
@@ -72,7 +70,7 @@ class _FakeRegistry:
         # Pass an explicit set to simulate catalog-missing (manifest-only) models.
         self._catalog_backed = catalog_backed if catalog_backed is not None else set(models)
 
-    def get_models(self) -> Dict[str, _Model]:
+    def get_models(self) -> dict[str, _Model]:
         return self._models
 
     def is_catalog_backed(self, model_name: str) -> bool:
@@ -87,7 +85,7 @@ class _FakeRegistry:
 class _FakeService:
     """Stub exposing get_column_impact, used to drive get_changeset_impact."""
 
-    def __init__(self, impacts: Dict[tuple, dict]):
+    def __init__(self, impacts: dict[tuple, dict]):
         self._impacts = impacts
 
     def get_column_impact(self, model: str, column: str) -> dict:
@@ -420,11 +418,11 @@ class _StampedRegistry(_FakeRegistry):
 
     def __init__(
         self,
-        fingerprint: Optional[str] = None,
-        catalog_generated_at: Optional[str] = None,
-        manifest_generated_at: Optional[str] = None,
-        catalog_invocation_id: Optional[str] = None,
-        manifest_invocation_id: Optional[str] = None,
+        fingerprint: str | None = None,
+        catalog_generated_at: str | None = None,
+        manifest_generated_at: str | None = None,
+        catalog_invocation_id: str | None = None,
+        manifest_invocation_id: str | None = None,
     ):
         super().__init__({"m": _Model({"a": _Col("int")})})
         self._fingerprint = fingerprint
@@ -437,7 +435,7 @@ class _StampedRegistry(_FakeRegistry):
             ),
         )
 
-    def get_catalog_fingerprint(self) -> Optional[str]:
+    def get_catalog_fingerprint(self) -> str | None:
         return self._fingerprint
 
     def get_artifact_stamps(self) -> ArtifactStamps:
@@ -1141,15 +1139,15 @@ def test_markdown_empty_changeset_warns_when_structural_skipped():
 
 @dataclass
 class _PathModel:
-    columns: Dict[str, _Col]
-    resource_path: Optional[str]
+    columns: dict[str, _Col]
+    resource_path: str | None
 
 
 class _PathRegistry:
-    def __init__(self, models: Dict[str, _PathModel]):
+    def __init__(self, models: dict[str, _PathModel]):
         self._models = models
 
-    def get_models(self) -> Dict[str, _PathModel]:
+    def get_models(self) -> dict[str, _PathModel]:
         return self._models
 
 
@@ -1329,11 +1327,11 @@ if __name__ == "__main__":
 
 # --- override resolution -------------------------------------------------
 
-from parrant.lineage.changeset import (  # noqa: E402
+from parrant.lineage.changeset import (
     OverrideResolution,
     resolve_overrides,
 )
-from parrant.models.schema import OverrideVerb  # noqa: E402
+from parrant.models.schema import OverrideVerb
 
 
 def _lc(model, column):

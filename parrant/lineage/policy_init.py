@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from parrant.lineage.service import LineageService
 from parrant.models.schema import MetaKeyCoverage, PolicyInitScan
@@ -37,7 +37,7 @@ DEFAULT_OUTPUT_PATH = "./parrant.policy.yml"
 _META_TEMPLATE_CAP = 12
 
 
-def _flatten_meta_keys(meta: Dict[str, Any], _prefix: str = "") -> List[str]:
+def _flatten_meta_keys(meta: dict[str, Any], _prefix: str = "") -> list[str]:
     """Yield the dotted leaf-key paths (``a.b.c``) of a (possibly nested) meta dict.
 
     Nested dicts are recursed so a nested key still gets an accurate histogram entry AND a
@@ -46,7 +46,7 @@ def _flatten_meta_keys(meta: Dict[str, Any], _prefix: str = "") -> List[str]:
     operator against an intermediate dict is rarely what an author means. An empty dict value is
     treated as a leaf so it still surfaces as a (present-but-empty) key rather than vanishing.
     """
-    keys: List[str] = []
+    keys: list[str] = []
     for key, value in meta.items():
         dotted = f"{_prefix}{key}"
         if isinstance(value, dict) and value:
@@ -56,7 +56,7 @@ def _flatten_meta_keys(meta: Dict[str, Any], _prefix: str = "") -> List[str]:
     return keys
 
 
-def _histogram(counts: Dict[str, int], total: int) -> List[MetaKeyCoverage]:
+def _histogram(counts: dict[str, int], total: int) -> list[MetaKeyCoverage]:
     """Build the coverage rows, sorted most-covered-first then by key (stable, deterministic)."""
     rows = [MetaKeyCoverage(key=key, n_present=n, total=total) for key, n in counts.items()]
     rows.sort(key=lambda row: (-row.n_present, row.key))
@@ -76,8 +76,8 @@ def scan_project(registry: Any) -> PolicyInitScan:
     total_columns = 0
     column_test_count = 0
     models_with_column_tests = 0
-    model_meta_counts: Dict[str, int] = {}
-    column_meta_counts: Dict[str, int] = {}
+    model_meta_counts: dict[str, int] = {}
+    column_meta_counts: dict[str, int] = {}
     models_with_grants = 0
 
     for name, model in models.items():
@@ -111,7 +111,7 @@ def scan_project(registry: Any) -> PolicyInitScan:
     )
 
 
-def _has_select_grant(config: Dict[str, Any]) -> bool:
+def _has_select_grant(config: dict[str, Any]) -> bool:
     """True when a model's resolved dbt ``config`` declares a non-empty ``grants.select``.
 
     Mirrors the engine's ``config.grants.select`` dotted lookup: the roles a model grants SELECT
@@ -134,7 +134,7 @@ def _has_select_grant(config: Dict[str, Any]) -> bool:
 # --- YAML emitter (string-templated; comments cannot survive yaml.dump) ------
 
 
-def _header_lines() -> List[str]:
+def _header_lines() -> list[str]:
     """The top comment block: ownership, the ``policy test`` pointer, and the two footguns.
 
     Deliberately never writes the literal permissive-default token: this scaffold only ever uses
@@ -172,7 +172,7 @@ def _header_lines() -> List[str]:
     ]
 
 
-def _defaults_lines() -> List[str]:
+def _defaults_lines() -> list[str]:
     return [
         "defaults:",
         "  # Anything we cannot prove safe is treated as unsafe. Safe here because every ENABLED",
@@ -185,7 +185,7 @@ def _defaults_lines() -> List[str]:
     ]
 
 
-def _comment_out(yaml_lines: List[str]) -> List[str]:
+def _comment_out(yaml_lines: list[str]) -> list[str]:
     """Comment out a block of 2-space-indented YAML lines, preserving relative indentation."""
     return [f"  # {line[2:]}" if line.startswith("  ") else f"# {line}" for line in yaml_lines]
 
@@ -205,7 +205,7 @@ _EXPOSURE_GUARD_YAML = [
 ]
 
 
-def _provable_break_block_lines(enabled: bool) -> List[str]:
+def _provable_break_block_lines(enabled: bool) -> list[str]:
     """The ``provable-break-block`` rule. Safe-by-construction: ``provable_test_break`` is a pure
     structural fact (always TRUE/FALSE, never UNKNOWN) evaluated at aggregate scope, so this
     block can only ever fire on a real, offline-verifiable breakage — never on a fail-safe
@@ -223,7 +223,7 @@ def _provable_break_block_lines(enabled: bool) -> List[str]:
     ] + _comment_out(_PROVABLE_BREAK_BLOCK_YAML)
 
 
-def _exposure_guard_lines(enabled: bool) -> List[str]:
+def _exposure_guard_lines(enabled: bool) -> list[str]:
     """The ``exposure-guard`` rule — WARN (not block) when a change reaches an exposure.
 
     ``touches_exposure`` CAN be UNKNOWN on unresolved reach, but this is a non-blocking WARN
@@ -240,7 +240,7 @@ def _exposure_guard_lines(enabled: bool) -> List[str]:
     ] + _comment_out(_EXPOSURE_GUARD_YAML)
 
 
-def _meta_template_lines(row: MetaKeyCoverage, subject: str) -> List[str]:
+def _meta_template_lines(row: MetaKeyCoverage, subject: str) -> list[str]:
     """A single COMMENTED, meta-keyed reach template for one discovered key.
 
     Prefixed by the REAL coverage from the scan and using a PRESENCE operator (``is_true``) —
@@ -279,7 +279,7 @@ def _slug(key: str) -> str:
     return slug or "meta"
 
 
-def _footer_lines() -> List[str]:
+def _footer_lines() -> list[str]:
     return [
         "",
         "# --- Next steps -------------------------------------------------------------",
@@ -302,7 +302,7 @@ def emit_policy_yaml(scan: PolicyInitScan) -> str:
 
     Invariant: the string ``fail_open`` is never emitted (an open-when-unsure gate is not a gate).
     """
-    lines: List[str] = []
+    lines: list[str] = []
     lines.extend(_header_lines())
     lines.append("")
     lines.append("version: 1")
@@ -310,7 +310,7 @@ def emit_policy_yaml(scan: PolicyInitScan) -> str:
     lines.extend(_defaults_lines())
     lines.append("")
 
-    enabled_blocks: List[List[str]] = []
+    enabled_blocks: list[list[str]] = []
     if scan.tests_present:
         enabled_blocks.append(_provable_break_block_lines(enabled=True))
     if scan.exposures_present:
@@ -336,7 +336,7 @@ def emit_policy_yaml(scan: PolicyInitScan) -> str:
         lines.append("rules: []")
 
     # Disabled tool-owned rules, shown commented so the user knows why they were withheld.
-    disabled_blocks: List[List[str]] = []
+    disabled_blocks: list[list[str]] = []
     if not scan.tests_present:
         disabled_blocks.append(_provable_break_block_lines(enabled=False))
     if not scan.exposures_present:
@@ -360,11 +360,11 @@ def emit_policy_yaml(scan: PolicyInitScan) -> str:
     return text
 
 
-def _meta_section_lines(scan: PolicyInitScan) -> List[str]:
+def _meta_section_lines(scan: PolicyInitScan) -> list[str]:
     """Emit the commented meta-template section (empty when the scan found no meta keys)."""
     if not scan.model_meta_keys and not scan.column_meta_keys:
         return []
-    lines: List[str] = [
+    lines: list[str] = [
         "",
         "  # --- Commented meta templates (uncomment AFTER `policy test`) ---------",
         "  # These are keyed to dbt `meta` the scan actually found. Each is prefixed with its real",
@@ -376,7 +376,7 @@ def _meta_section_lines(scan: PolicyInitScan) -> List[str]:
     return lines
 
 
-def _config_section_lines(scan: PolicyInitScan) -> List[str]:
+def _config_section_lines(scan: PolicyInitScan) -> list[str]:
     """Emit the commented config-axis (PII over-grant) template, or nothing.
 
     Only offered when the scan found at least one model declaring ``config.grants.select`` — the
@@ -411,8 +411,8 @@ def _config_section_lines(scan: PolicyInitScan) -> List[str]:
     ]
 
 
-def _capped_templates(rows: List[MetaKeyCoverage], subject: str) -> List[str]:
-    lines: List[str] = []
+def _capped_templates(rows: list[MetaKeyCoverage], subject: str) -> list[str]:
+    lines: list[str] = []
     for row in rows[:_META_TEMPLATE_CAP]:
         lines.append("")
         lines.extend(_meta_template_lines(row, subject))
@@ -432,7 +432,7 @@ def _capped_templates(rows: List[MetaKeyCoverage], subject: str) -> List[str]:
 def run_policy_init(
     manifest: str,
     catalog: str,
-    adapter: Optional[str],
+    adapter: str | None,
     output: str,
     force: bool,
     stdout: bool,

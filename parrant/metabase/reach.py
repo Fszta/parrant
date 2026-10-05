@@ -1,4 +1,4 @@
-""" — the offline Metabase reach index: ``(dbt_model, column) -> cards -> dashboards``.
+"""— the offline Metabase reach index: ``(dbt_model, column) -> cards -> dashboards``.
 
 Built once from a loaded :class:`MetabaseLineage` artifact + the relation join
 (:mod:`parrant.metabase.join`). Pure, offline, zero-credential — it imports ONLY
@@ -15,8 +15,9 @@ already scans ``reach.kind: exposure`` over the object's ``meta.*``.
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from datetime import datetime, timezone
-from typing import Any, Dict, Iterable, List, Optional, Set, Tuple
+from typing import Any
 
 from parrant.metabase.join import normalize_relation
 from parrant.models.schema import (
@@ -45,10 +46,10 @@ class MetabaseReach:
 
     def __init__(
         self,
-        column_cards: Dict[Tuple[str, str], Dict[int, str]],
-        model_cards: Dict[str, Set[int]],
-        dashboards_by_card: Dict[int, List[MetabaseDashboard]],
-        dashboard_by_name: Dict[str, MetabaseDashboard],
+        column_cards: dict[tuple[str, str], dict[int, str]],
+        model_cards: dict[str, set[int]],
+        dashboards_by_card: dict[int, list[MetabaseDashboard]],
+        dashboard_by_name: dict[str, MetabaseDashboard],
     ) -> None:
         self._column_cards = column_cards
         self._model_cards = model_cards
@@ -56,7 +57,7 @@ class MetabaseReach:
         self._dashboard_by_name = dashboard_by_name
 
     @classmethod
-    def build(cls, lineage: MetabaseLineage, relation_index: Dict[str, str]) -> "MetabaseReach":
+    def build(cls, lineage: MetabaseLineage, relation_index: dict[str, str]) -> MetabaseReach:
         """Invert the artifact into the reach index using the dbt relation join.
 
         A card's column refs (column-precise) map ``(relation, column) -> (dbt_model, column)``;
@@ -65,8 +66,8 @@ class MetabaseReach:
         card never over-fires on a model-level match. Relations that don't join to
         any dbt model are dropped (honest: no guess).
         """
-        column_cards: Dict[Tuple[str, str], Dict[int, str]] = {}
-        model_cards: Dict[str, Set[int]] = {}
+        column_cards: dict[tuple[str, str], dict[int, str]] = {}
+        model_cards: dict[str, set[int]] = {}
 
         for card in lineage.cards:
             for ref in card.columns:
@@ -89,8 +90,8 @@ class MetabaseReach:
                         continue
                     model_cards.setdefault(model, set()).add(card.card_id)
 
-        dashboards_by_card: Dict[int, List[MetabaseDashboard]] = {}
-        dashboard_by_name: Dict[str, MetabaseDashboard] = {}
+        dashboards_by_card: dict[int, list[MetabaseDashboard]] = {}
+        dashboard_by_name: dict[str, MetabaseDashboard] = {}
         for dashboard in lineage.dashboards:
             dashboard_by_name[dashboard_reach_name(dashboard.dashboard_id)] = dashboard
             for card_id in dashboard.card_ids:
@@ -102,9 +103,9 @@ class MetabaseReach:
 
     def reached_dashboards(
         self,
-        columns: Iterable[Tuple[str, str]],
+        columns: Iterable[tuple[str, str]],
         models: Iterable[str],
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """Dashboards reached by any of ``columns`` (column-precise) or ``models`` (table grain).
 
         ``columns`` is the set of ``(model, column)`` the change touches — the changed column
@@ -113,13 +114,13 @@ class MetabaseReach:
         dashboard, deterministically ordered by dashboard id, ready to append onto
         ``affected_exposures`` and each change's ``reached_exposures``.
         """
-        hits: Dict[int, Dict[str, Any]] = {}
+        hits: dict[int, dict[str, Any]] = {}
 
         def _record(
             card_id: int,
             precision: str,
-            matched: Optional[Tuple[str, str]] = None,
-            role: Optional[str] = None,
+            matched: tuple[str, str] | None = None,
+            role: str | None = None,
         ) -> None:
             for dashboard in self._dashboards_by_card.get(card_id, ()):
                 entry = hits.setdefault(
@@ -148,7 +149,7 @@ class MetabaseReach:
             for card_id in self._model_cards.get(model.lower(), ()):
                 _record(card_id, "table")
 
-        entries: List[Dict[str, Any]] = []
+        entries: list[dict[str, Any]] = []
         for dashboard_id in sorted(hits):
             info = hits[dashboard_id]
             dashboard: MetabaseDashboard = info["dashboard"]
@@ -175,7 +176,7 @@ class MetabaseReach:
             )
         return entries
 
-    def dashboard_meta(self, name: str) -> Optional[Dict[str, Any]]:
+    def dashboard_meta(self, name: str) -> dict[str, Any] | None:
         """Resolve a reached dashboard's meta for the policy ``reach.where`` clause.
 
         ``name`` is the synthetic ``metabase.dashboard.<id>``. Returns the dashboard's ``meta``
@@ -186,7 +187,7 @@ class MetabaseReach:
         dashboard = self._dashboard_by_name.get(name)
         if dashboard is None:
             return None
-        merged: Dict[str, Any] = {"source": "metabase", "name": dashboard.name}
+        merged: dict[str, Any] = {"source": "metabase", "name": dashboard.name}
         if dashboard.url is not None:
             merged["url"] = dashboard.url
         merged.update(dashboard.meta)
@@ -194,10 +195,10 @@ class MetabaseReach:
 
 
 def build_reach_confidence(
-    lineage: Optional[MetabaseLineage],
-    reached_entries: List[Dict[str, Any]],
+    lineage: MetabaseLineage | None,
+    reached_entries: list[dict[str, Any]],
     max_age_hours: float = 24.0,
-    now: Optional[datetime] = None,
+    now: datetime | None = None,
 ) -> MetabaseReachConfidence:
     """Summarise the honesty of the appended Metabase reach.
 
@@ -209,7 +210,7 @@ def build_reach_confidence(
         return MetabaseReachConfidence(level="absent")
 
     generated_at = lineage.provenance.generated_at
-    age_hours: Optional[float] = None
+    age_hours: float | None = None
     parsed = _parse_iso8601(generated_at)
     if parsed is not None:
         reference = now or datetime.now(timezone.utc)
@@ -235,7 +236,7 @@ def build_reach_confidence(
     )
 
 
-def _parse_iso8601(value: str) -> Optional[datetime]:
+def _parse_iso8601(value: str) -> datetime | None:
     """Parse an ISO-8601 timestamp, tolerating a trailing ``Z``. ``None`` on failure."""
     try:
         normalized = value.replace("Z", "+00:00") if value.endswith("Z") else value

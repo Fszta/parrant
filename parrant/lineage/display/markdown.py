@@ -10,7 +10,7 @@ Reviewer-first layout (a reviewer's real question is *"should I worry?"*):
 with per-expression folds (oversized SQL truncated) and low-risk pass-through folded away.
 """
 
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 # Fold long dashboard lists so a huge blast radius stays scrollable.
 _MAX_DASHBOARDS_INLINE = 8
@@ -49,11 +49,11 @@ _STRUCTURAL_SKIP_NOTE = (
 )
 
 
-def _structural_checks_skipped(report: Dict[str, Any]) -> bool:
+def _structural_checks_skipped(report: dict[str, Any]) -> bool:
     return not report.get("structural_checks_available", True)
 
 
-def _structural_diff_degraded_note(report: Dict[str, Any]) -> Optional[str]:
+def _structural_diff_degraded_note(report: dict[str, Any]) -> str | None:
     """The honesty line for a degraded structural diff (identical/stale catalogs), or None.
 
     A degraded stamp means removed/type_changed columns may be INVISIBLE in this report even
@@ -77,7 +77,7 @@ def _kind_label(kind: str) -> str:
     return _KIND_LABELS.get(kind, kind.replace("_", " "))
 
 
-def _truncate_sql(raw: str) -> Tuple[str, str]:
+def _truncate_sql(raw: str) -> tuple[str, str]:
     """Return (sql_to_show, note). Oversized one-liners are head-elided with a pointer."""
     raw = raw.strip()
     if len(raw) <= _MAX_SQL_CHARS:
@@ -90,7 +90,7 @@ def _truncate_sql(raw: str) -> Tuple[str, str]:
     return head + " …", note
 
 
-def _format_break(b: Dict[str, Any]) -> str:
+def _format_break(b: dict[str, Any]) -> str:
     """One compiler-style diagnostic line for a provable break.
 
     ``error[BREAK-TEST]`` — <removing|renaming> `model.column` breaks the **<kind>** test,
@@ -106,7 +106,7 @@ def _format_break(b: Dict[str, Any]) -> str:
     return f"- `error[BREAK-TEST]` {verb} {node} breaks the **{test_name}** test{via}{where}"
 
 
-def _owner_suffix(exposure: Dict[str, Any]) -> str:
+def _owner_suffix(exposure: dict[str, Any]) -> str:
     """A ' — owner: **Name**' clause routing the exposure to who must sign off.
 
     dbt stores an exposure ``owner`` as ``{name, email}``. Surfacing it turns blast
@@ -120,14 +120,14 @@ def _owner_suffix(exposure: Dict[str, Any]) -> str:
     return f" — owner: **{label}**" if label else ""
 
 
-def _group_by_model(columns: List[Dict[str, Any]]) -> Dict[str, List[Dict[str, Any]]]:
-    grouped: Dict[str, List[Dict[str, Any]]] = {}
+def _group_by_model(columns: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
+    grouped: dict[str, list[dict[str, Any]]] = {}
     for column in columns:
         grouped.setdefault(column.get("model", "?"), []).append(column)
     return {model: grouped[model] for model in sorted(grouped)}
 
 
-def _confidence_floor_clause(confidence: Dict[str, Any]) -> str:
+def _confidence_floor_clause(confidence: dict[str, Any]) -> str:
     """A short clause for the verdict banner when impact is a lower bound."""
     if not confidence or confidence.get("level") == "full":
         return ""
@@ -137,7 +137,7 @@ def _confidence_floor_clause(confidence: Dict[str, Any]) -> str:
     return f" Impact is a **lower bound** — {_plural(n, 'downstream model')} couldn't be analyzed."
 
 
-def _confidence_reason_words(confidence: Dict[str, Any]) -> str:
+def _confidence_reason_words(confidence: dict[str, Any]) -> str:
     """Plain-language reason models were unanalyzable, for the footer."""
     no_column_info = confidence.get("no_column_info", 0)
     parse_failed = confidence.get("parse_failed", 0)
@@ -150,7 +150,7 @@ def _confidence_reason_words(confidence: Dict[str, Any]) -> str:
     return ""
 
 
-def _capped_name_lines(names: List[str], label: str) -> Tuple[List[str], bool]:
+def _capped_name_lines(names: list[str], label: str) -> tuple[list[str], bool]:
     """Render up to the display cap of sorted model names, with a "… +N more" line
     when the source list is longer. Returns the lines and whether names were elided."""
     if not names:
@@ -165,7 +165,7 @@ def _capped_name_lines(names: List[str], label: str) -> Tuple[List[str], bool]:
     return lines, truncated
 
 
-def _render_unanalyzable_names(confidence: Dict[str, Any]) -> List[str]:
+def _render_unanalyzable_names(confidence: dict[str, Any]) -> list[str]:
     """A folded ``<details>`` disclosure of the reachable models that couldn't be
     analyzed, capped for readability. Mutates ``confidence`` to set the display-only
     ``*_truncated`` flags True when it actually elided names (the JSON surface, which is
@@ -177,7 +177,7 @@ def _render_unanalyzable_names(confidence: Dict[str, Any]) -> List[str]:
     if not no_column_info and not parse_failed and not opaque:
         return []
     total = len(no_column_info) + len(parse_failed) + len(opaque)
-    body: List[str] = []
+    body: list[str] = []
     nci_lines, nci_truncated = _capped_name_lines(no_column_info, "No column info")
     pf_lines, pf_truncated = _capped_name_lines(parse_failed, "Parse failed")
     # Opaque is a deliberate choice, not a failure — labelled distinctly from the others.
@@ -211,7 +211,7 @@ _POLICY_DECISION_MARKER = {
 _POLICY_DECISION_ORDER = ["block", "warn", "allow"]
 
 
-def _reach_sample(reach: List[str]) -> str:
+def _reach_sample(reach: list[str]) -> str:
     """A capped, deterministic ```a`, `b` +N more`` sample of the matched reach."""
     if not reach:
         return ""
@@ -222,7 +222,7 @@ def _reach_sample(reach: List[str]) -> str:
     return shown
 
 
-def _proof_marker(hit: Dict[str, Any]) -> str:
+def _proof_marker(hit: dict[str, Any]) -> str:
     """The load-bearing honesty distinction for one fired rule.
 
     A rule that fired because a fail-safe knob resolved an UNKNOWN (missing meta / an
@@ -237,7 +237,7 @@ def _proof_marker(hit: Dict[str, Any]) -> str:
     return "✓ proven match"
 
 
-def _policy_hit_line(hit: Dict[str, Any]) -> str:
+def _policy_hit_line(hit: dict[str, Any]) -> str:
     """One "why this verdict" row for a fired rule: the honesty marker (proven vs fail-safe),
     the rule id, the subject change, and a capped sample of the matched reach.
 
@@ -265,7 +265,7 @@ def _policy_hit_line(hit: Dict[str, Any]) -> str:
     return line
 
 
-def _override_applied_line(record: Dict[str, Any]) -> str:
+def _override_applied_line(record: dict[str, Any]) -> str:
     """One line for a honored override: verb, subject, the severity delta, and the reason."""
     model = record.get("model", "?")
     column = record.get("column")
@@ -279,7 +279,7 @@ def _override_applied_line(record: Dict[str, Any]) -> str:
     )
 
 
-def _render_overrides_section(report: Dict[str, Any]) -> List[str]:
+def _render_overrides_section(report: dict[str, Any]) -> list[str]:
     """Render the override signals: malformed-pragma warnings (loud, unfolded, FIRST — a
     dropped pragma must be noticed), honored overrides with their severity delta, ineffective
     (no-op) overrides with a fix hint, and a folded list of stale overrides to prune.
@@ -293,7 +293,7 @@ def _render_overrides_section(report: Dict[str, Any]) -> List[str]:
     if not (applied or ineffective or stale or warnings):
         return []
 
-    out: List[str] = []
+    out: list[str] = []
     # Warnings FIRST and UNFOLDED — the audit invariant (a reasonless/malformed pragma is
     # dropped, ruling unchanged) is only useful if the author actually notices it did nothing.
     if warnings:
@@ -349,7 +349,7 @@ def _render_overrides_section(report: Dict[str, Any]) -> List[str]:
     return out
 
 
-def _render_policy_section(verdict: Dict[str, Any]) -> List[str]:
+def _render_policy_section(verdict: dict[str, Any]) -> list[str]:
     """Render the policy-engine verdict: fired rules grouped by decision (block first),
     the selective build/test sets, and the notify intents for the consumer's CI to route.
 
@@ -359,7 +359,7 @@ def _render_policy_section(verdict: Dict[str, Any]) -> List[str]:
     decision = str(verdict.get("decision", "allow"))
     marker = _POLICY_DECISION_MARKER.get(decision, "🟢")
     hits = verdict.get("hits") or []
-    out: List[str] = [f"### {marker} Policy verdict — {decision.upper()}", ""]
+    out: list[str] = [f"### {marker} Policy verdict — {decision.upper()}", ""]
 
     if decision == "block":
         # A block must state its EXIT, not just the obstacle: reframe it as
@@ -367,10 +367,12 @@ def _render_policy_section(verdict: Dict[str, Any]) -> List[str]:
         # tripping the rules below — so a reviewer sees the release path, not a dead end. This is
         # pure messaging over the existing verdict; no override input is consulted.
         out += [
-            "> **Blocked until the change stops tripping the rules below.** This gate re-runs on "
-            "every push and clears itself — no manual override needed. Clear it by any of: "
-            "reverting or proving-equivalent the breaking change; evolving the downstream model / "
-            "schema to absorb it; or stopping it from reaching the flagged object.",
+            (
+                "> **Blocked until the change stops tripping the rules below.** This gate re-runs on "
+                "every push and clears itself — no manual override needed. Clear it by any of: "
+                "reverting or proving-equivalent the breaking change; evolving the downstream model / "
+                "schema to absorb it; or stopping it from reaching the flagged object."
+            ),
             "",
         ]
 
@@ -381,7 +383,7 @@ def _render_policy_section(verdict: Dict[str, Any]) -> List[str]:
         # The honesty marker on each row states whether the rule PROVED its match or fired on a
         # fail-safe default, so a fail-safe block never reads as a confident one.
         out += ["**Why this verdict** — the rules that fired, and on what:", ""]
-        by_decision: Dict[str, List[Dict[str, Any]]] = {}
+        by_decision: dict[str, list[dict[str, Any]]] = {}
         for hit in hits:
             by_decision.setdefault(str(hit.get("decision", "allow")), []).append(hit)
         for band in _POLICY_DECISION_ORDER:
@@ -425,7 +427,7 @@ def _render_policy_section(verdict: Dict[str, Any]) -> List[str]:
     # be silently folded into a clean pass. Shown whenever either counter is > 0.
     unresolved = int(verdict.get("unresolved_reach_count", 0) or 0)
     skipped = int(verdict.get("skipped_missing_meta", 0) or 0)
-    coverage_bits: List[str] = []
+    coverage_bits: list[str] = []
     if skipped:
         coverage_bits.append(f"{_plural(skipped, 'column')} undecided (missing meta)")
     if unresolved:
@@ -442,7 +444,7 @@ def _render_policy_section(verdict: Dict[str, Any]) -> List[str]:
     return out
 
 
-def _render_unproven_conditions(verdict: Dict[str, Any]) -> List[str]:
+def _render_unproven_conditions(verdict: dict[str, Any]) -> list[str]:
     """Suppressed-unknown telemetry (additive section, issue #124): warn-rule conditions that a
     ``fail_closed`` knob would have fired were the rule blocking. An all-warn pilot policy must
     never read clean while block mode would fail closed here — so the count line is loud and the
@@ -450,7 +452,7 @@ def _render_unproven_conditions(verdict: Dict[str, Any]) -> List[str]:
     unproven = verdict.get("unproven") or []
     if not unproven:
         return []
-    out: List[str] = [
+    out: list[str] = [
         "> ⚠️ **"
         + _plural(len(unproven), "unproven warn-rule condition")
         + " (unknown metadata under `fail_closed`)** — suppressed, not fired; block mode "
@@ -486,7 +488,7 @@ def _truncate_expr(raw: str, limit: int = 120) -> str:
     return collapsed
 
 
-def render_changeset_markdown(report: Dict[str, Any], explain: bool = False) -> str:
+def render_changeset_markdown(report: dict[str, Any], explain: bool = False) -> str:
     """Render a changeset impact report (from ``build_changeset_report``) as Markdown.
 
     The compact semantic reason a column was flagged is shown by default, so the default gate
@@ -497,7 +499,7 @@ def render_changeset_markdown(report: Dict[str, Any], explain: bool = False) -> 
     changeset = report.get("changeset", {})
     summary = report.get("summary", {})
 
-    out: List[str] = ["## Column-level impact of this change", ""]
+    out: list[str] = ["## Column-level impact of this change", ""]
 
     total_changes = changeset.get("total_changes", 0)
     if not total_changes:
@@ -518,7 +520,7 @@ def render_changeset_markdown(report: Dict[str, Any], explain: bool = False) -> 
     changed_nodes = sorted({(c.get("model", "?"), c.get("column", "?")) for c in by_change})
     # (model, column) -> the explain block a logic change carried, so `--explain` can annotate
     # each changed column with WHY it was flagged. Structural changes carry no explain block.
-    explain_by_node: Dict[Tuple[str, str], Dict[str, Any]] = {}
+    explain_by_node: dict[tuple[str, str], dict[str, Any]] = {}
     for change in by_change:
         block = change.get("explain")
         if isinstance(block, dict):
@@ -556,7 +558,7 @@ def render_changeset_markdown(report: Dict[str, Any], explain: bool = False) -> 
             subject = f"**{_plural(len(changed_nodes), 'column')}**"
         else:
             subject = f"**{_plural(total_changes, 'column')}**"
-        reach_bits: List[str] = []
+        reach_bits: list[str] = []
         if apps:
             reach_bits.append(f"**{_plural(len(apps), 'automation')}**")
         if dashboards:
@@ -581,7 +583,7 @@ def render_changeset_markdown(report: Dict[str, Any], explain: bool = False) -> 
         kind_txt = ", ".join(f"{_kind_label(k)}: {v}" for k, v in sorted(by_kind.items()))
     out.append(f"**Changed:** {_plural(total_changes, 'column')} — {kind_txt}")
     if changed_nodes:
-        rows: List[str] = []
+        rows: list[str] = []
         for model, column in changed_nodes:
             rows.append(f"- `{model}.{column}`")
             # The compact semantic reason ("why was this flagged?") shows BY DEFAULT so the
@@ -632,10 +634,10 @@ def render_changeset_markdown(report: Dict[str, Any], explain: bool = False) -> 
         out.append("")
         out.append("| Model | What changes | How |")
         out.append("|---|---|---|")
-        folds: List[str] = []
+        folds: list[str] = []
         for model in review_models:
-            what_bits: List[str] = []
-            how_bits: List[str] = []
+            what_bits: list[str] = []
+            how_bits: list[str] = []
             derived_cols = sorted(
                 derived_by_model.get(model, []), key=lambda c: c.get("column", "")
             )
@@ -679,7 +681,7 @@ def render_changeset_markdown(report: Dict[str, Any], explain: bool = False) -> 
 
     # --- ⚠️ Business-facing exposures (apps surfaced above dashboards) --------------------
     if exposures:
-        rollup_bits: List[str] = []
+        rollup_bits: list[str] = []
         if dashboards:
             rollup_bits.append(_plural(len(dashboards), "dashboard"))
         if apps:
@@ -687,7 +689,7 @@ def render_changeset_markdown(report: Dict[str, Any], explain: bool = False) -> 
         out.append(f"### ⚠️ Business-facing exposures ({len(exposures)})")
         out.append("")
 
-        def _fmt(exp: Dict[str, Any]) -> str:
+        def _fmt(exp: dict[str, Any]) -> str:
             name = exp.get("name", "?")
             url = exp.get("url")
             head = f"- **[{name}]({url})**" if url else f"- **{name}**"
@@ -753,7 +755,7 @@ def render_changeset_markdown(report: Dict[str, Any], explain: bool = False) -> 
         out += _render_policy_section(policy_verdict)
 
     # --- Footer: confidence + coverage (small, plain, honest) ----------------------------
-    footer: List[str] = []
+    footer: list[str] = []
     if _structural_checks_skipped(report):
         footer.append(_STRUCTURAL_SKIP_NOTE)
     degraded_note = _structural_diff_degraded_note(report)
@@ -767,7 +769,7 @@ def render_changeset_markdown(report: Dict[str, Any], explain: bool = False) -> 
             f"Break detection skipped {_plural(unattributable, 'dbt test')} it couldn't tie "
             f"to a column (singular/custom tests); a clean ruling is a lower bound."
         )
-    unanalyzable_disclosure: List[str] = []
+    unanalyzable_disclosure: list[str] = []
     if confidence:
         if confidence.get("level") == "full":
             footer.append(
@@ -782,7 +784,7 @@ def render_changeset_markdown(report: Dict[str, Any], explain: bool = False) -> 
             # Additional degradation clauses, kept distinct so the reviewer can tell a parser
             # *failure* apart from a deliberate *choice* not to analyze (opaque, e.g. semantic
             # views). Both are rebuilt rather than proven safe to skip.
-            extra_clauses: List[str] = []
+            extra_clauses: list[str] = []
             if partial_edges:
                 extra_clauses.append(f"{partial_edges} more carried unresolved column edges")
             if opaque:

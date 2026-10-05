@@ -1,9 +1,10 @@
 import json
+import logging
 import sys
 from pathlib import Path
+from typing import Any
+
 import click
-import logging
-from typing import Any, Dict, List, Optional
 
 from parrant.lineage.changeset import (
     ChangesetBuilder,
@@ -14,7 +15,11 @@ from parrant.lineage.changeset import (
     resolve_git_scope,
     scope_changes_to_models,
 )
-from parrant.models.schema import GitScopeStatus
+from parrant.lineage.display import DotDisplay, JsonDisplay, TextDisplay
+from parrant.lineage.display.base import LineageStaticDisplay
+from parrant.lineage.display.html.explore import LineageExplorer
+from parrant.lineage.display.markdown import render_changeset_markdown
+from parrant.lineage.service import LineageSelector, LineageService
 from parrant.lineage.verdict import (
     applied_overrides,
     break_is_overridden,
@@ -22,12 +27,7 @@ from parrant.lineage.verdict import (
     decide_verdict,
     ineffective_overrides,
 )
-from parrant.lineage.display import TextDisplay, DotDisplay, JsonDisplay
-from parrant.lineage.display.html.explore import LineageExplorer
-from parrant.lineage.display.markdown import render_changeset_markdown
-from parrant.lineage.service import LineageService, LineageSelector
-from parrant.lineage.display.base import LineageStaticDisplay
-
+from parrant.models.schema import GitScopeStatus
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s - %(message)s")
 
@@ -125,12 +125,12 @@ def cli(
     format: str,
     output: str,
     port: int,
-    adapter: Optional[str],
-    base_manifest: Optional[str],
-    base_catalog: Optional[str],
-    git_base: Optional[str],
-    policy_path: Optional[str],
-    metabase_path: Optional[str],
+    adapter: str | None,
+    base_manifest: str | None,
+    base_catalog: str | None,
+    git_base: str | None,
+    policy_path: str | None,
+    metabase_path: str | None,
     no_overrides: bool,
 ) -> None:
     """Parrant - column-level lineage and change-impact for dbt (parry breaks, warrant safe)."""
@@ -239,7 +239,7 @@ def cli(
                 if format == "dot":
                     display.save()
             else:
-                available_columns = ", ".join(model.columns.keys())
+                ", ".join(model.columns.keys())
                 click.echo(
                     f"Error: Column '{selector.column}' not found in model '{selector.model}'",
                     err=True,
@@ -263,21 +263,21 @@ def cli(
                     click.echo(f"  {downstream}")
 
     except Exception as e:
-        click.echo(f"Error: {str(e)}", err=True)
+        click.echo(f"Error: {e!s}", err=True)
         sys.exit(1)
 
 
 def _build_explore_change_context(
     head_service: LineageService,
     *,
-    adapter: Optional[str],
-    base_manifest: Optional[str],
-    base_catalog: Optional[str],
-    git_base: Optional[str],
-    policy_path: Optional[str],
-    metabase_path: Optional[str],
+    adapter: str | None,
+    base_manifest: str | None,
+    base_catalog: str | None,
+    git_base: str | None,
+    policy_path: str | None,
+    metabase_path: str | None,
     no_overrides: bool = False,
-) -> Optional[Dict[str, Any]]:
+) -> dict[str, Any] | None:
     """Assemble the changeset report the explorer surfaces, or ``None`` when no change
     source was supplied (pure-explore mode).
 
@@ -290,10 +290,10 @@ def _build_explore_change_context(
         return None
 
     honor_overrides = not no_overrides
-    stale_overrides: List[Dict[str, object]] = []
-    override_warnings: List[str] = []
+    stale_overrides: list[dict[str, object]] = []
+    override_warnings: list[str] = []
 
-    base_service: Optional[LineageService] = None
+    base_service: LineageService | None = None
     if base_manifest:
         resolved_base_catalog = base_catalog
         if not resolved_base_catalog:
@@ -364,7 +364,7 @@ def _build_explore_change_context(
     )
     by_change_list = aggregated.get("by_change") if isinstance(aggregated, dict) else None
     summary_obj = report.get("summary", {})
-    summary: Dict[str, Any] = summary_obj if isinstance(summary_obj, dict) else {}
+    summary: dict[str, Any] = summary_obj if isinstance(summary_obj, dict) else {}
     report["verdict"] = decide_verdict(breaks, summary, changes, by_change=by_change_list)
     # Mirror the impact() gate: unexcused (blocking) breaks only; excused ones surface as
     # allow-break override records so the explorer shows the same signals as CI.
@@ -528,22 +528,22 @@ def _build_explore_change_context(
 def impact(
     manifest: str,
     catalog: str,
-    base_manifest: Optional[str],
-    base_catalog: Optional[str],
-    git_base: Optional[str],
-    scope_git: Optional[str],
+    base_manifest: str | None,
+    base_catalog: str | None,
+    git_base: str | None,
+    scope_git: str | None,
     format: str,
-    adapter: Optional[str],
+    adapter: str | None,
     explain: bool,
     no_overrides: bool,
     ci: bool,
     fail_on: str,
-    policy_path: Optional[str],
-    metabase_path: Optional[str],
+    policy_path: str | None,
+    metabase_path: str | None,
     emit_selector: bool,
-    github_token: Optional[str],
-    repo: Optional[str],
-    pr_number: Optional[int],
+    github_token: str | None,
+    repo: str | None,
+    pr_number: int | None,
 ) -> None:
     """Diff-driven impact: assess the blast radius of a whole change (PR).
 
@@ -583,14 +583,14 @@ def impact(
         honor_overrides = not no_overrides
         # Override side-outputs (populated by the changeset build below): stale directives
         # (no matching change) and parse warnings (malformed pragmas). Empty under --no-overrides.
-        stale_overrides: List[Dict[str, object]] = []
-        override_warnings: List[str] = []
+        stale_overrides: list[dict[str, object]] = []
+        override_warnings: list[str] = []
 
-        base_service: Optional[LineageService] = None
-        changes: List[ColumnChange]
+        base_service: LineageService | None = None
+        changes: list[ColumnChange]
         # Populated only under --scope-git: whether the git intersection was applied or
         # disabled fail-safe (unmappable logic-bearing files). Rendered as report["scope_git"].
-        scope_status: Optional[GitScopeStatus] = None
+        scope_status: GitScopeStatus | None = None
         # Whether structural checks (added/removed/type_changed) could run. They need a
         # real catalog on both sides; the two-manifest path decides this from the builder
         # below. The git-diff fallback is a separate, self-evident coarse mode, so it is
@@ -717,7 +717,7 @@ def impact(
         )
         by_change_list = aggregated.get("by_change") if isinstance(aggregated, dict) else None
         summary_obj = report.get("summary", {})
-        summary: Dict[str, Any] = summary_obj if isinstance(summary_obj, dict) else {}
+        summary: dict[str, Any] = summary_obj if isinstance(summary_obj, dict) else {}
         report["verdict"] = decide_verdict(breaks, summary, changes, by_change=by_change_list)
         # a break excused by an allow-break override is DEMOTED — it must not keep the
         # gate armed. Split the breaks so report/gate reflect only the UNEXCUSED (blocking)
@@ -787,7 +787,7 @@ def impact(
             click.echo(render_changeset_markdown(report, explain=explain))
 
     except Exception as e:
-        click.echo(f"Error: {str(e)}", err=True)
+        click.echo(f"Error: {e!s}", err=True)
         sys.exit(1)
 
     # Selector emission is a pure side-channel to $GITHUB_OUTPUT: independent of --ci, it posts
@@ -879,15 +879,15 @@ def policy_group() -> None:
 def policy_test(
     manifest: str,
     catalog: str,
-    adapter: Optional[str],
+    adapter: str | None,
     policy_path: str,
-    git_range: Optional[str],
-    last: Optional[int],
-    changesets_dir: Optional[str],
-    repo_dir: Optional[str],
+    git_range: str | None,
+    last: int | None,
+    changesets_dir: str | None,
+    repo_dir: str | None,
     fmt: str,
     fail_on: str,
-    baseline_path: Optional[str],
+    baseline_path: str | None,
 ) -> None:
     """Backtest a candidate policy over git history (or a saved changeset corpus).
 
@@ -928,8 +928,8 @@ def policy_test(
         )
         sys.exit(1)
 
-    report: Optional[BacktestReport] = None
-    baseline: Optional[BacktestReport] = None
+    report: BacktestReport | None = None
+    baseline: BacktestReport | None = None
     try:
         # Resolve the policy up front so a broken file fails loudly (PolicyConfigError -> exit 1),
         # never treated as "no policy".
@@ -940,7 +940,7 @@ def policy_test(
 
         if baseline_path:
             try:
-                with open(baseline_path, "r", encoding="utf-8") as handle:
+                with open(baseline_path, encoding="utf-8") as handle:
                     baseline = BacktestReport.model_validate_json(handle.read())
             except Exception as exc:
                 raise click.ClickException(
@@ -966,7 +966,7 @@ def policy_test(
         else:
             click.echo(render_backtest_table(report))
     except Exception as exc:
-        click.echo(f"Error: {str(exc)}", err=True)
+        click.echo(f"Error: {exc!s}", err=True)
         sys.exit(1)
 
     # The gate exit is OUTSIDE the try/except (mirrors impact's CI gate): a tripped gate is a
@@ -1014,7 +1014,7 @@ def policy_test(
 def policy_init(
     manifest: str,
     catalog: str,
-    adapter: Optional[str],
+    adapter: str | None,
     output: str,
     force: bool,
     stdout: bool,
@@ -1069,7 +1069,7 @@ def _relation_name_resolver(registry: Any):
     if reader is None or not hasattr(reader, "_find_node"):
         return None
 
-    def _resolve(model_name: str) -> Optional[str]:
+    def _resolve(model_name: str) -> str | None:
         node = reader._find_node(model_name)
         if not node:
             return None
@@ -1082,9 +1082,9 @@ def _relation_name_resolver(registry: Any):
 def _run_ci(
     report: dict,
     fail_on_value: str,
-    token: Optional[str],
-    repo: Optional[str],
-    pr_number: Optional[int],
+    token: str | None,
+    repo: str | None,
+    pr_number: int | None,
     explain: bool = False,
 ) -> None:
     """Post the sticky PR comment (best-effort) and exit per the severity gate."""

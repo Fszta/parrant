@@ -21,7 +21,7 @@ import logging
 import os
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Dict, Optional
+from typing import Any
 
 import requests
 
@@ -54,9 +54,9 @@ class FailOn(str, Enum):
 
 
 def gate_exit_code(
-    summary: Dict[str, Any],
+    summary: dict[str, Any],
     fail_on: FailOn,
-    policy_verdict: Optional[Any] = None,
+    policy_verdict: Any | None = None,
 ) -> int:
     """Map an aggregated-impact ``summary`` to an exit code under ``fail_on``.
 
@@ -86,7 +86,7 @@ def gate_exit_code(
     return 0  # FailOn.NONE and any unknown policy: warn only.
 
 
-def highest_tripped_level(summary: Dict[str, Any]) -> str:
+def highest_tripped_level(summary: dict[str, Any]) -> str:
     """Return the most severe gate level this ``summary`` trips, ignoring policy.
 
     Walks the blocking policies from most to least severe and returns the first whose
@@ -101,7 +101,7 @@ def highest_tripped_level(summary: Dict[str, Any]) -> str:
     return FailOn.NONE.value
 
 
-def write_github_outputs(report: Dict[str, Any]) -> bool:
+def write_github_outputs(report: dict[str, Any]) -> bool:
     """Emit machine-readable results to ``$GITHUB_OUTPUT`` for the composite action.
 
     Writes ``affected_models``, ``affected_columns``, ``affected_exposures`` and
@@ -134,15 +134,14 @@ def write_github_outputs(report: Dict[str, Any]) -> bool:
         values["test_set_size"] = len(policy_verdict.get("test_set", []) or [])
     try:
         with open(output_path, "a", encoding="utf-8") as handle:
-            for key, value in values.items():
-                handle.write(f"{key}={value}\n")
+            handle.writelines(f"{key}={value}\n" for key, value in values.items())
     except OSError as exc:
         logger.warning("Could not write GitHub Action outputs: %s", exc)
         return False
     return True
 
 
-def write_selector_outputs(report: Dict[str, Any]) -> bool:
+def write_selector_outputs(report: dict[str, Any]) -> bool:
     """Emit the policy-free rebuild selection to ``$GITHUB_OUTPUT`` for a selective build.
 
     Projects ``report["selection"]`` verbatim — it never recomputes — writing exactly two keys:
@@ -169,8 +168,7 @@ def write_selector_outputs(report: Dict[str, Any]) -> bool:
     }
     try:
         with open(output_path, "a", encoding="utf-8") as handle:
-            for key, value in values.items():
-                handle.write(f"{key}={value}\n")
+            handle.writelines(f"{key}={value}\n" for key, value in values.items())
     except OSError as exc:
         logger.warning("Could not write selector GitHub Action outputs: %s", exc)
         return False
@@ -194,7 +192,7 @@ class GitHubContext:
     api_url: str = _DEFAULT_API
 
 
-def resolve_pr_number(explicit: Optional[int] = None) -> Optional[int]:
+def resolve_pr_number(explicit: int | None = None) -> int | None:
     """Resolve the PR number, preferring an explicit value over the GH event.
 
     In GitHub Actions the ``pull_request`` event payload carries the number at
@@ -222,10 +220,10 @@ def resolve_pr_number(explicit: Optional[int] = None) -> Optional[int]:
 
 
 def resolve_context(
-    token: Optional[str] = None,
-    repo: Optional[str] = None,
-    pr_number: Optional[int] = None,
-) -> Optional[GitHubContext]:
+    token: str | None = None,
+    repo: str | None = None,
+    pr_number: int | None = None,
+) -> GitHubContext | None:
     """Build a :class:`GitHubContext` from explicit args + the GH Actions env.
 
     Returns ``None`` when any of token / repo / PR number is missing, so callers
@@ -241,7 +239,7 @@ def resolve_context(
     return GitHubContext(repo=repo, pr_number=int(number), token=token, api_url=api_url)
 
 
-def _headers(token: str) -> Dict[str, str]:
+def _headers(token: str) -> dict[str, str]:
     return {
         "Authorization": f"Bearer {token}",
         "Accept": "application/vnd.github+json",
@@ -250,8 +248,8 @@ def _headers(token: str) -> Dict[str, str]:
 
 
 def _find_comment_id(
-    session: Any, base_url: str, headers: Dict[str, str], marker: str
-) -> Optional[int]:
+    session: Any, base_url: str, headers: dict[str, str], marker: str
+) -> int | None:
     """Return the id of the existing marked comment, paging through all comments."""
     page = 1
     while True:

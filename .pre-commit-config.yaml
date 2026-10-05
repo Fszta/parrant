@@ -14,21 +14,23 @@ repos:
       - id: mixed-line-ending
         args: ['--fix=lf']
 
+  # black / ruff / mypy revs are pinned to the SAME versions as pyproject.toml's dev
+  # dependencies (see the comment there) — bump them together.
   - repo: https://github.com/psf/black
-    rev: 24.10.0
+    rev: 25.12.0
     hooks:
       - id: black
         language_version: python3
         args: ['--line-length=100']
 
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.8.4
+    rev: v0.16.3
     hooks:
       - id: ruff
         args: [--fix, --unsafe-fixes, --exit-non-zero-on-fix]
 
   - repo: https://github.com/pre-commit/mirrors-mypy
-    rev: v1.15.0
+    rev: v1.19.1
     hooks:
       - id: mypy
         args: [--show-error-codes, --pretty, --explicit-package-bases]

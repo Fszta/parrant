@@ -11,8 +11,6 @@ skipped) so a low-coverage run is never mistaken for a clean pass. JSON output i
 
 from __future__ import annotations
 
-from typing import List, Optional
-
 from parrant.models.schema import BacktestReport, BacktestRuleStat, BacktestSelectionStats
 
 
@@ -36,7 +34,7 @@ def _totals_line(report: BacktestReport) -> str:
     )
 
 
-def _selection_lines(stats: Optional[BacktestSelectionStats]) -> List[str]:
+def _selection_lines(stats: BacktestSelectionStats | None) -> list[str]:
     """The selection widen-rate block (both renderers), or ``[]`` when no point carried one.
 
     Measurement surface only: how often the rebuild selection widened to every reachable model,
@@ -60,14 +58,13 @@ def _selection_lines(stats: Optional[BacktestSelectionStats]) -> List[str]:
 
 def render_backtest_table(report: BacktestReport) -> str:
     """A fixed-width text table for terminals — the per-rule aggregate + totals + fidelity note."""
-    lines: List[str] = []
+    lines: list[str] = []
     lines.append(f"Policy backtest [{report.mode}] — policy: {report.policy_source}")
     if report.base or report.head:
         lines.append(f"Range: {report.base}..{report.head}")
     lines.append("")
     lines.append(_totals_line(report))
-    for selection_line in _selection_lines(report.selection_stats):
-        lines.append(selection_line)
+    lines.extend(_selection_lines(report.selection_stats))
     lines.append("")
 
     if not report.rule_stats:
@@ -99,7 +96,7 @@ def render_backtest_table(report: BacktestReport) -> str:
 
 def render_backtest_markdown(report: BacktestReport) -> str:
     """A Markdown report for a CI artifact / PR comment / agent over MCP."""
-    lines: List[str] = []
+    lines: list[str] = []
     lines.append(f"## Policy backtest — `{report.policy_source}`")
     lines.append("")
     lines.append(f"- **Mode:** {report.mode}")

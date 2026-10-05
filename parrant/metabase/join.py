@@ -1,4 +1,4 @@
-""" — join the Metabase artifact's warehouse relations back to dbt models.
+"""— join the Metabase artifact's warehouse relations back to dbt models.
 
 Offline, zero-credential by construction: this module imports ONLY the lineage provider
 protocol (for typing) and reads ``Model`` fields. It never imports the Metabase client, so
@@ -15,7 +15,7 @@ Metabase-side ``analytics.marts.dim`` meet.
 
 from __future__ import annotations
 
-from typing import Callable, Dict, Optional, Set
+from collections.abc import Callable
 
 from parrant.lineage.provider import LineageProvider
 
@@ -35,8 +35,8 @@ def normalize_relation(raw: str) -> str:
 
 def build_relation_index(
     provider: LineageProvider,
-    get_relation_name: Optional[Callable[[str], Optional[str]]] = None,
-) -> Dict[str, str]:
+    get_relation_name: Callable[[str], str | None] | None = None,
+) -> dict[str, str]:
     """Build ``normalized db.schema.table -> dbt model name`` (lowercased model keys).
 
     Prefer the manifest ``relation_name`` (via ``get_relation_name(model_name)``, when
@@ -47,11 +47,11 @@ def build_relation_index(
 
     Pure and offline: reads only ``provider.get_models()`` plus the optional resolver.
     """
-    full: Dict[str, str] = {}
-    schema_table_owners: Dict[str, Set[str]] = {}
+    full: dict[str, str] = {}
+    schema_table_owners: dict[str, set[str]] = {}
 
     for name, model in provider.get_models().items():
-        keys: Set[str] = set()
+        keys: set[str] = set()
         if get_relation_name is not None:
             relation_name = get_relation_name(name)
             if relation_name:

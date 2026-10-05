@@ -56,6 +56,15 @@ jobs:
     - name: Install dependencies
       run: poetry install --no-interaction
 
+    - name: Type check
+      run: poetry run type-check
+
+    - name: Check formatting (black)
+      run: poetry run black --check --line-length=100 .
+
+    - name: Lint (ruff)
+      run: poetry run ruff check .
+
     - name: Run unit tests
       run: poetry run test-unit
 

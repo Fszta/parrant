@@ -1,4 +1,4 @@
-""" — the two resolvers + warehouse-meta normalization, against the recorded fixture."""
+"""— the two resolvers + warehouse-meta normalization, against the recorded fixture."""
 
 from __future__ import annotations
 
