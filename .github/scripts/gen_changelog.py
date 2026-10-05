@@ -58,7 +58,12 @@ def main() -> int:
         m = COMMIT_RE.match(subj)
         if not m:
             continue
-        typ, scope, bang, desc = (m.group("type"), m.group("scope"), m.group("bang"), m.group("desc"))
+        typ, scope, bang, desc = (
+            m.group("type"),
+            m.group("scope"),
+            m.group("bang"),
+            m.group("desc"),
+        )
         # Release/CI plumbing is never user-facing: drop it even when a commit is
         # mis-typed as feat/fix (e.g. `fix(ci): ...`) instead of `ci: ...`.
         if scope in ("ci", "release"):
@@ -72,9 +77,7 @@ def main() -> int:
             buckets[typ].append(bullet)
 
     if prev_tag:
-        header = (
-            f"## [{new_version}]({repo_url}/compare/{prev_tag}...v{new_version}) ({date})\n"
-        )
+        header = f"## [{new_version}]({repo_url}/compare/{prev_tag}...v{new_version}) ({date})\n"
     else:
         header = f"## {new_version} ({date})\n"
 

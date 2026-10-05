@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any
 
 from parrant.metabase.pmbql import is_pmbql, normalize_dataset_query
 from parrant.metabase.resolvers import CardResolver
@@ -23,11 +23,11 @@ F_PEOPLE_ID = 4
 F_PEOPLE_NAME = 48
 
 
-def load_pmbql() -> Dict[str, Any]:
+def load_pmbql() -> dict[str, Any]:
     return json.loads(_PMBQL_PATH.read_text(encoding="utf-8"))
 
 
-def _cards_by_id() -> Dict[int, dict]:
+def _cards_by_id() -> dict[int, dict]:
     return {c["id"]: c for c in load_pmbql()["cards"]}
 
 

@@ -1,6 +1,7 @@
 import re
+from typing import Any
+
 from sqlglot import exp
-from typing import Dict, List, Optional, Any
 
 
 def strip_sql_comments(text: str) -> str:
@@ -25,7 +26,7 @@ def strip_sql_comments(text: str) -> str:
     return text.strip()
 
 
-def get_table_aliases(parsed: Any) -> Dict[str, str]:
+def get_table_aliases(parsed: Any) -> dict[str, str]:
     aliases = {}
     for table in parsed.find_all((exp.Table, exp.From, exp.Join)):
         if table.alias:
@@ -54,7 +55,7 @@ def get_lateral_flatten_aliases(parsed: Any) -> set:
     return aliases
 
 
-def _enclosing_select(node: Any) -> Optional[Any]:
+def _enclosing_select(node: Any) -> Any | None:
     """Walk up the parent chain to the SELECT that owns this node (``None`` if unattached)."""
     parent = node.parent
     while parent is not None and not isinstance(parent, exp.Select):
@@ -62,7 +63,7 @@ def _enclosing_select(node: Any) -> Optional[Any]:
     return parent
 
 
-def _flatten_input_expression(explode: Any) -> Optional[Any]:
+def _flatten_input_expression(explode: Any) -> Any | None:
     """Return the expression being unnested by a ``flatten`` (an ``exp.Explode``).
 
     The flattened value is either passed positionally (``flatten(x)`` -> ``explode.this == x``)
@@ -88,7 +89,7 @@ def _flatten_input_expression(explode: Any) -> Optional[Any]:
     return inner
 
 
-def get_flatten_alias_nodes(parsed: Any) -> List[tuple]:
+def get_flatten_alias_nodes(parsed: Any) -> list[tuple]:
     """Return ``(alias, flattened_expression, enclosing_select)`` for each ``flatten`` in the query.
 
     Covers the two shapes Snowflake ``flatten`` parses into: ``lateral flatten(...) a`` — an
@@ -101,7 +102,7 @@ def get_flatten_alias_nodes(parsed: Any) -> List[tuple]:
     no alias, or whose inner is not an ``Explode`` (e.g. a ``lateral (subquery)``), is skipped —
     only genuine flatten table-functions are returned.
     """
-    nodes: List[tuple] = []
+    nodes: list[tuple] = []
     for holder in list(parsed.find_all(exp.Lateral)) + list(parsed.find_all(exp.TableFromRows)):
         alias = holder.alias
         if not alias:
@@ -131,7 +132,7 @@ def get_table_context(select: Any) -> str:
     return ""
 
 
-def get_all_tables_from_select(select: Any) -> List[str]:
+def get_all_tables_from_select(select: Any) -> list[str]:
     tables = []
     from_clause = select.find(exp.From)
     if from_clause:
@@ -142,15 +143,13 @@ def get_all_tables_from_select(select: Any) -> List[str]:
     for join in select.find_all(exp.Join):
         if hasattr(join, "this"):
             join_table = join.this
-            if isinstance(join_table, exp.Table):
-                tables.append(str(join_table.name).lower())
-            elif hasattr(join_table, "name"):
+            if isinstance(join_table, exp.Table) or hasattr(join_table, "name"):
                 tables.append(str(join_table.name).lower())
 
     return tables
 
 
-def get_final_select(parsed: Any) -> Optional[Any]:
+def get_final_select(parsed: Any) -> Any | None:
     query = parsed
     while hasattr(query, "this") and query.this:
         query = query.this
@@ -164,7 +163,7 @@ def get_final_select(parsed: Any) -> Optional[Any]:
     return None
 
 
-def get_final_selects(parsed: Any) -> List[Any]:
+def get_final_selects(parsed: Any) -> list[Any]:
     """Return every top-level branch SELECT to process.
 
     For a ``UNION`` / ``UNION ALL`` (including chained/nested unions), returns the
@@ -183,7 +182,7 @@ def get_final_selects(parsed: Any) -> List[Any]:
         query = query.this
 
     if isinstance(query, exp.Union):
-        selects: List[Any] = []
+        selects: list[Any] = []
         for side in (query.this, query.expression):
             selects.extend(get_final_selects(side))
         return selects

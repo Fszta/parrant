@@ -1,14 +1,14 @@
-from typing import Dict, Set, Optional, Any, Union
+from typing import Any
+
 from graphviz import Digraph  # type: ignore  # missing stubs for graphviz
-from parrant.models.schema import Column, ColumnLineage
-from parrant.lineage.provider import LineageProvider
+
 from parrant.lineage.display.base import LineageStaticDisplay
+from parrant.lineage.provider import LineageProvider
+from parrant.models.schema import Column, ColumnLineage
 
 
 class DotDisplay(LineageStaticDisplay):
-    def __init__(
-        self, output_file: str = "lineage.dot", registry: Optional[LineageProvider] = None
-    ):
+    def __init__(self, output_file: str = "lineage.dot", registry: LineageProvider | None = None):
         self.dot = Digraph(comment="Column Lineage")
         self.dot.attr(rankdir="LR")
         self.dot.attr("node", fontname="Helvetica")
@@ -16,10 +16,10 @@ class DotDisplay(LineageStaticDisplay):
         self.dot.attr(nodesep="1.0")
         self.dot.attr(ranksep="1.0")
         self.output_file = output_file
-        self.models: Dict[str, Any] = {}
+        self.models: dict[str, Any] = {}
         self.registry = registry
-        self.model_columns: Dict[str, Dict[str, str]] = {}
-        self.edges: Set[tuple[str, str]] = set()
+        self.model_columns: dict[str, dict[str, str]] = {}
+        self.edges: set[tuple[str, str]] = set()
         self.main_model: str = ""
         self.main_column: str = ""
 
@@ -27,7 +27,7 @@ class DotDisplay(LineageStaticDisplay):
         self._add_column_to_model(column.model_name, column.name, column.data_type)
 
     def _add_column_to_model(
-        self, model_name: str, col_name: str, data_type: Optional[str] = None
+        self, model_name: str, col_name: str, data_type: str | None = None
     ) -> None:
         if model_name not in self.model_columns:
             self.model_columns[model_name] = {}
@@ -75,8 +75,8 @@ class DotDisplay(LineageStaticDisplay):
         self,
         current_model_name: str,
         current_col_name: str,
-        model_refs: Dict[str, Dict[str, ColumnLineage]],
-        processed: Optional[Set[str]] = None,
+        model_refs: dict[str, dict[str, ColumnLineage]],
+        processed: set[str] | None = None,
     ) -> None:
         if self.registry is None:
             return
@@ -101,7 +101,7 @@ class DotDisplay(LineageStaticDisplay):
                     self._add_edge(current_ref, f"{model_name}.{col_name}")
                     self._process_model_chain(model_name, col_name, model_refs, processed)
 
-    def _add_refs(self, refs: Dict[str, Dict[str, ColumnLineage]], direction: str) -> None:
+    def _add_refs(self, refs: dict[str, dict[str, ColumnLineage]], direction: str) -> None:
         if not refs:
             return
 
@@ -113,7 +113,7 @@ class DotDisplay(LineageStaticDisplay):
         for model_name in self.model_columns:
             self._create_model_subgraph(model_name, model_name == self.main_model)
 
-    def display_upstream(self, refs: Dict[str, Union[Dict[str, ColumnLineage], Set[str]]]) -> None:
+    def display_upstream(self, refs: dict[str, dict[str, ColumnLineage] | set[str]]) -> None:
         model_refs = {
             k: v
             for k, v in refs.items()
@@ -121,9 +121,7 @@ class DotDisplay(LineageStaticDisplay):
         }
         self._add_refs(model_refs, direction="upstream")
 
-    def display_downstream(
-        self, refs: Dict[str, Union[Dict[str, ColumnLineage], Set[str]]]
-    ) -> None:
+    def display_downstream(self, refs: dict[str, dict[str, ColumnLineage] | set[str]]) -> None:
         model_refs = {
             k: v
             for k, v in refs.items()

@@ -22,9 +22,9 @@ UNKNOWN, and the ``warn``/``fail_closed`` PII rule did NOT fire (ALLOW — a sil
 
 import json
 
-from parrant.lineage.sqlglot_provider import build_sqlglot_provider
-from parrant.lineage.policy import MetaIndex, evaluate_policy, parse_policy
 from parrant.lineage.changeset import ChangeKind, ColumnChange
+from parrant.lineage.policy import MetaIndex, evaluate_policy, parse_policy
+from parrant.lineage.sqlglot_provider import build_sqlglot_provider
 from parrant.models.schema import GateDecision, SemanticChangeKind
 
 DB, SCH = "analytics", "main"
@@ -122,7 +122,10 @@ def _build_provider(tmp_path):
         "exposures": {},
     }
     # Deferred build: only the changed mart is in the fresh catalog; upstreams are not rebuilt.
-    catalog = {"metadata": {}, "nodes": {f"model.analytics.{MART}": _catalog_node(MART, _MART_COLS)}}
+    catalog = {
+        "metadata": {},
+        "nodes": {f"model.analytics.{MART}": _catalog_node(MART, _MART_COLS)},
+    }
 
     m = tmp_path / "manifest.json"
     c = tmp_path / "catalog.json"

@@ -11,7 +11,6 @@ import json
 import sys
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
-from typing import Dict, Optional, Tuple
 
 import click
 
@@ -28,7 +27,7 @@ def _extractor_version() -> str:
         return "0.0.0"
 
 
-def _resolve_dialect(manifest: Optional[str], adapter: Optional[str]) -> Optional[str]:
+def _resolve_dialect(manifest: str | None, adapter: str | None) -> str | None:
     if adapter:
         return adapter
     # ``--manifest`` is optional only when ``--adapter`` supplies the dialect directly; the
@@ -39,7 +38,7 @@ def _resolve_dialect(manifest: Optional[str], adapter: Optional[str]) -> Optiona
     return reader.get_adapter()
 
 
-def _load_dashboard_meta(path: Optional[str]) -> Dict:
+def _load_dashboard_meta(path: str | None) -> dict:
     if not path:
         return {}
     return json.loads(Path(path).read_text(encoding="utf-8"))
@@ -104,19 +103,19 @@ def _load_dashboard_meta(path: Optional[str]) -> Dict:
 )
 def metabase_extract(
     metabase_url: str,
-    metabase_api_key: Optional[str],
-    metabase_username: Optional[str],
-    metabase_password: Optional[str],
-    database_ids: Tuple[int, ...],
-    manifest: Optional[str],
-    adapter: Optional[str],
+    metabase_api_key: str | None,
+    metabase_username: str | None,
+    metabase_password: str | None,
+    database_ids: tuple[int, ...],
+    manifest: str | None,
+    adapter: str | None,
     output: str,
     include_archived: bool,
-    dashboard_meta_file: Optional[str],
-    previous: Optional[str],
+    dashboard_meta_file: str | None,
+    previous: str | None,
     max_workers: int,
     timeout: int,
-    fail_under: Optional[float],
+    fail_under: float | None,
 ) -> None:
     """Snapshot Metabase card→column and card→dashboard lineage into an offline artifact."""
     if not manifest and not adapter:
@@ -176,6 +175,6 @@ def metabase_extract(
         sys.exit(1)
 
 
-def main(args: Optional[list] = None, prog_name: Optional[str] = None) -> None:
+def main(args: list | None = None, prog_name: str | None = None) -> None:
     """Entry point used by ``cli/main.py``'s dispatch branch."""
     metabase_extract.main(args=args, prog_name=prog_name)

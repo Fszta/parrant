@@ -1,13 +1,14 @@
 """End-to-end tests for lineage API."""
 
-import pytest
 import subprocess
 import time
-import requests
-from pathlib import Path
-from typing import Dict, Any, Set, Iterator, TypedDict, cast
+from collections.abc import Iterator
 from contextlib import contextmanager
+from pathlib import Path
+from typing import Any, TypedDict, cast
 
+import pytest
+import requests
 
 EXPECTED_CRYPTO_PORTFOLIO_COLUMNS = 37
 TEST_MODEL = "int_trade_flow"
@@ -88,18 +89,18 @@ def _terminate_process(process: subprocess.Popen[bytes]) -> None:
         pass
 
 
-def _get_lineage_response(port: int, model: str, column: str) -> Dict[str, Any]:
+def _get_lineage_response(port: int, model: str, column: str) -> dict[str, Any]:
     """Get lineage response from the API endpoint."""
     endpoint = f"http://127.0.0.1:{port}/api/lineage/{model}/{column}"
     try:
         response = requests.get(endpoint, timeout=30)
         response.raise_for_status()
-        return cast(Dict[str, Any], response.json())
+        return cast(dict[str, Any], response.json())
     except requests.exceptions.RequestException as e:
         raise AssertionError(f"Failed to get lineage from {endpoint}: {e}")
 
 
-def _extract_column_set(data: Dict[str, Any]) -> Set[str]:
+def _extract_column_set(data: dict[str, Any]) -> set[str]:
     """Extract all column identifiers from the API response."""
     if not data or "nodes" not in data:
         return set()
@@ -115,7 +116,7 @@ def _extract_column_set(data: Dict[str, Any]) -> Set[str]:
     return columns
 
 
-def _count_columns_by_model(data: Dict[str, Any], model_name: str) -> int:
+def _count_columns_by_model(data: dict[str, Any], model_name: str) -> int:
     """Count columns for a specific model in the response."""
     if not data or "nodes" not in data:
         return 0
@@ -143,11 +144,11 @@ class ResultDict(TypedDict):
     restart: int
     total_columns: int
     target_model_columns: int
-    columns: Set[str]
+    columns: set[str]
 
 
 def test_lineage_api_determinism_across_restarts(
-    dbt_artifacts: Dict[str, Any], server_port: int
+    dbt_artifacts: dict[str, Any], server_port: int
 ) -> None:
     """Verify lineage API returns identical results across server restarts."""
     catalog_path = Path(dbt_artifacts["catalog_path"])
@@ -201,11 +202,11 @@ def test_lineage_api_determinism_across_restarts(
 class RequestResultDict(TypedDict):
     request: int
     total_columns: int
-    columns: Set[str]
+    columns: set[str]
 
 
 def test_lineage_api_determinism_within_instance(
-    dbt_artifacts: Dict[str, Any], server_port: int
+    dbt_artifacts: dict[str, Any], server_port: int
 ) -> None:
     """Verify multiple requests to the same server instance return identical results."""
     catalog_path = Path(dbt_artifacts["catalog_path"])
@@ -247,7 +248,7 @@ def test_lineage_api_determinism_within_instance(
             )
 
 
-def test_lineage_api_column_count(dbt_artifacts: Dict[str, Any], server_port: int) -> None:
+def test_lineage_api_column_count(dbt_artifacts: dict[str, Any], server_port: int) -> None:
     """Verify the API returns the expected number of columns for the target model."""
     catalog_path = Path(dbt_artifacts["catalog_path"])
     manifest_path = Path(dbt_artifacts["manifest_path"])
@@ -262,7 +263,7 @@ def test_lineage_api_column_count(dbt_artifacts: Dict[str, Any], server_port: in
         )
 
 
-def test_snapshot_api_support(dbt_artifacts: Dict[str, Any], server_port: int) -> None:
+def test_snapshot_api_support(dbt_artifacts: dict[str, Any], server_port: int) -> None:
     """Verify that snapshots are accessible through the API and have correct resource_type."""
     catalog_path = Path(dbt_artifacts["catalog_path"])
     manifest_path = Path(dbt_artifacts["manifest_path"])
@@ -328,7 +329,7 @@ def test_snapshot_api_support(dbt_artifacts: Dict[str, Any], server_port: int) -
             pytest.skip(f"Could not test snapshot lineage endpoint: {e}")
 
 
-def test_home_page_renders(dbt_artifacts: Dict[str, Any], server_port: int) -> None:
+def test_home_page_renders(dbt_artifacts: dict[str, Any], server_port: int) -> None:
     """The root page must render — it is the only template-rendering route, so API-only
     coverage misses it entirely (issue #139 shipped a server that answered every /api/*
     call but 500'd on the page users actually open)."""
@@ -343,7 +344,7 @@ def test_home_page_renders(dbt_artifacts: Dict[str, Any], server_port: int) -> N
         assert "<title>Parrant</title>" in response.text
 
 
-def test_coverage_endpoint(dbt_artifacts: Dict[str, Any], server_port: int) -> None:
+def test_coverage_endpoint(dbt_artifacts: dict[str, Any], server_port: int) -> None:
     """Verify /api/coverage exposes the artifact coverage block to the explorer UI."""
     catalog_path = Path(dbt_artifacts["catalog_path"])
     manifest_path = Path(dbt_artifacts["manifest_path"])
@@ -365,7 +366,7 @@ def test_coverage_endpoint(dbt_artifacts: Dict[str, Any], server_port: int) -> N
 
 
 def test_lineage_response_includes_confidence(
-    dbt_artifacts: Dict[str, Any], server_port: int
+    dbt_artifacts: dict[str, Any], server_port: int
 ) -> None:
     """Verify /api/lineage carries the impact confidence block in impact_summary."""
     catalog_path = Path(dbt_artifacts["catalog_path"])
@@ -384,7 +385,7 @@ def test_lineage_response_includes_confidence(
 
 
 def test_upstream_lineage_returns_full_chain(
-    dbt_artifacts: Dict[str, Any], server_port: int
+    dbt_artifacts: dict[str, Any], server_port: int
 ) -> None:
     """Verify API returns full upstream chain with proper edges."""
     catalog_path = Path(dbt_artifacts["catalog_path"])

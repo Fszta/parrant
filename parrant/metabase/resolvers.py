@@ -18,12 +18,12 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Literal, Optional, Set, Tuple
+from typing import Any, Literal
 
-from parrant.models.schema import MetabaseColumnRef
-from parrant.parser.sql_parser import SQLColumnParser
 from parrant.metabase.pmbql import normalize_dataset_query
 from parrant.metabase.warehouse_meta import CardCorpus, WarehouseMeta
+from parrant.models.schema import MetabaseColumnRef
+from parrant.parser.sql_parser import SQLColumnParser
 
 # The roles a resolved column may carry (matches ``MetabaseColumnRef.role``).
 Role = Literal["field", "breakout", "aggregation", "filter", "join", "order", "native"]
@@ -43,16 +43,16 @@ class ResolvedCard:
     """The unified resolver output the extractor turns into a ``MetabaseCard``."""
 
     precision: str  # "column" | "table" | "none"
-    columns: List[MetabaseColumnRef] = field(default_factory=list)
-    table_relations: List[str] = field(default_factory=list)
-    upstream_card_ids: List[int] = field(default_factory=list)
-    snippet_ids: List[int] = field(default_factory=list)
-    unresolved_reason: Optional[str] = None
+    columns: list[MetabaseColumnRef] = field(default_factory=list)
+    table_relations: list[str] = field(default_factory=list)
+    upstream_card_ids: list[int] = field(default_factory=list)
+    snippet_ids: list[int] = field(default_factory=list)
+    unresolved_reason: str | None = None
 
 
-def _iter_field_refs(node: Any) -> List[list]:
+def _iter_field_refs(node: Any) -> list[list]:
     """Recursively collect every MBQL ``["field", <id|name>, opts]`` clause under ``node``."""
-    found: List[list] = []
+    found: list[list] = []
     if isinstance(node, list):
         if node and node[0] == "field":
             found.append(node)
@@ -72,15 +72,15 @@ class CardResolver:
         self,
         meta: WarehouseMeta,
         corpus: CardCorpus,
-        dialect: Optional[str],
-        parser: Optional[SQLColumnParser] = None,
+        dialect: str | None,
+        parser: SQLColumnParser | None = None,
     ) -> None:
         self.meta = meta
         self.corpus = corpus
         self.dialect = dialect
         self.parser = parser or SQLColumnParser(dialect)
-        self._cache: Dict[int, ResolvedCard] = {}
-        self._resolving: Set[int] = set()
+        self._cache: dict[int, ResolvedCard] = {}
+        self._resolving: set[int] = set()
 
     # --- entry point ------------------------------------------------------
     def resolve_card(self, card: dict) -> ResolvedCard:
@@ -151,13 +151,13 @@ class CardResolver:
             unresolved_reason=reason,
         )
 
-    def _resolve_mbql_query(self, query: dict, acc: "_MbqlAccumulator") -> None:
+    def _resolve_mbql_query(self, query: dict, acc: _MbqlAccumulator) -> None:
         """Resolve one (possibly nested) MBQL query into ``acc``.
 
         ``name_map`` (column name → (relation_key, column)) lets field-by-name refs — common
         when the source is a card / nested query — resolve against the source's output.
         """
-        name_map: Dict[str, Tuple[str, str]] = {}
+        name_map: dict[str, tuple[str, str]] = {}
         source = query.get("source-table")
         if isinstance(source, str) and source.startswith("card__"):
             try:
@@ -180,7 +180,7 @@ class CardResolver:
             self._resolve_mbql_query(nested, acc)
 
         # Each clause contributes fields with a distinct role.
-        clause_roles: List[Tuple[str, Role]] = [
+        clause_roles: list[tuple[str, Role]] = [
             ("fields", "field"),
             ("breakout", "breakout"),
             ("aggregation", "aggregation"),
@@ -214,8 +214,8 @@ class CardResolver:
         self,
         node: Any,
         role: Role,
-        acc: "_MbqlAccumulator",
-        name_map: Dict[str, Tuple[str, str]],
+        acc: _MbqlAccumulator,
+        name_map: dict[str, tuple[str, str]],
     ) -> None:
         if node is None:
             return
@@ -255,11 +255,11 @@ class CardResolver:
             sql, tags, visited_cards=set(), visited_snippets=set()
         )
 
-        columns: Dict[Tuple[str, str], MetabaseColumnRef] = {}
+        columns: dict[tuple[str, str], MetabaseColumnRef] = {}
         for ref in dim_columns:
             columns[(ref.relation, ref.column)] = ref
-        table_relations: Set[str] = set()
-        reason: Optional[str] = None
+        table_relations: set[str] = set()
+        reason: str | None = None
 
         try:
             result = self.parser.parse_column_lineage(expanded)
@@ -329,9 +329,9 @@ class CardResolver:
         self,
         source: str,
         role: Role,
-        synthetic: Dict[int, Set[str]],
-        columns: Dict[Tuple[str, str], MetabaseColumnRef],
-        table_relations: Set[str],
+        synthetic: dict[int, set[str]],
+        columns: dict[tuple[str, str], MetabaseColumnRef],
+        table_relations: set[str],
     ) -> None:
         """Map a parser ``table.column`` source to a relation, or degrade to table grain."""
         if "." in source:
@@ -354,8 +354,8 @@ class CardResolver:
                 relation=key, column=column.lower(), role=role, confidence="medium"
             )
 
-    def _synthetic_relations(self, synthetic: Dict[int, Set[str]]) -> Set[str]:
-        out: Set[str] = set()
+    def _synthetic_relations(self, synthetic: dict[int, set[str]]) -> set[str]:
+        out: set[str] = set()
         for relations in synthetic.values():
             out.update(relations)
         return out
@@ -365,9 +365,9 @@ class CardResolver:
         self,
         sql: str,
         tags: dict,
-        visited_cards: Set[int],
-        visited_snippets: Set[int],
-    ) -> Tuple[str, Set[int], Set[int], Dict[int, Set[str]], List[MetabaseColumnRef]]:
+        visited_cards: set[int],
+        visited_snippets: set[int],
+    ) -> tuple[str, set[int], set[int], dict[int, set[str]], list[MetabaseColumnRef]]:
         """Substitute template tags so the SQL parses, returning expansion side-channels.
 
         Returns ``(expanded_sql, upstream_card_ids, snippet_ids, synthetic, dim_columns)``
@@ -375,10 +375,10 @@ class CardResolver:
         (so ``__card_<id>`` tokens resolve to table-grain reach) and ``dim_columns`` are the
         precisely-recovered field-filter columns (spec Q4).
         """
-        upstream_card_ids: Set[int] = set()
-        snippet_ids: Set[int] = set()
-        synthetic: Dict[int, Set[str]] = {}
-        dim_columns: List[MetabaseColumnRef] = []
+        upstream_card_ids: set[int] = set()
+        snippet_ids: set[int] = set()
+        synthetic: dict[int, set[str]] = {}
+        dim_columns: list[MetabaseColumnRef] = []
 
         # Unwrap Metabase optional blocks [[ ... ]] so inner SQL/tags survive.
         expanded = sql.replace("[[", " ").replace("]]", " ")
@@ -401,12 +401,12 @@ class CardResolver:
                         )
 
         # Card references {{#123}} → a table token; inherit the card's relations.
-        def _card_sub(match: "re.Match[str]") -> str:
+        def _card_sub(match: re.Match[str]) -> str:
             card_id = int(match.group(1))
             upstream_card_ids.add(card_id)
             if card_id not in visited_cards:
                 sub = self._resolve_card_id(card_id)
-                relations: Set[str] = set(sub.table_relations)
+                relations: set[str] = set(sub.table_relations)
                 for ref in sub.columns:
                     relations.add(ref.relation)
                 synthetic[card_id] = relations
@@ -416,7 +416,7 @@ class CardResolver:
 
         # Snippet references {{snippet: name}} → inline the snippet content (one level of
         # transitive expansion, cycle-guarded).
-        def _snippet_sub(match: "re.Match[str]") -> str:
+        def _snippet_sub(match: re.Match[str]) -> str:
             name = match.group(1).strip()
             snippet = self.corpus.snippet_by_name(name)
             if snippet is None:
@@ -441,7 +441,7 @@ class CardResolver:
         expanded = _SNIPPET_TAG_RE.sub(_snippet_sub, expanded)
 
         # Remaining variables (text/number/date/dimension placeholders) → safe literals.
-        def _var_sub(match: "re.Match[str]") -> str:
+        def _var_sub(match: re.Match[str]) -> str:
             name = match.group(1).strip()
             tag = tags.get(name) or {}
             if tag.get("type") == "dimension":
@@ -451,7 +451,7 @@ class CardResolver:
         expanded = _VAR_TAG_RE.sub(_var_sub, expanded)
         return expanded, upstream_card_ids, snippet_ids, synthetic, dim_columns
 
-    def _extract_tables(self, sql: str) -> Set[str]:
+    def _extract_tables(self, sql: str) -> set[str]:
         """Cheap table extraction for the parse-failed degrade path (sqlglot table walk)."""
         try:
             from sqlglot import exp, parse_one
@@ -459,7 +459,7 @@ class CardResolver:
             parsed = parse_one(sql, dialect=self.dialect)
         except Exception:
             return set()
-        names: Set[str] = set()
+        names: set[str] = set()
         for table in parsed.find_all(exp.Table):
             parts = [p for p in (table.catalog, table.db, table.name) if p]
             if parts:
@@ -469,7 +469,7 @@ class CardResolver:
 
 @dataclass
 class _MbqlAccumulator:
-    relations: Set[str] = field(default_factory=set)
-    columns: Dict[Tuple[str, str], MetabaseColumnRef] = field(default_factory=dict)
-    upstream_card_ids: Set[int] = field(default_factory=set)
+    relations: set[str] = field(default_factory=set)
+    columns: dict[tuple[str, str], MetabaseColumnRef] = field(default_factory=dict)
+    upstream_card_ids: set[int] = field(default_factory=set)
     unknown_field: bool = False

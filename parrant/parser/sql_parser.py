@@ -1,8 +1,11 @@
-import re
 import logging
+import re
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from sqlglot import parse_one, exp
-from typing import Dict, List, Set, Optional, Any, Callable, Literal, Tuple, cast
+from typing import Any, Literal, cast
+
+from sqlglot import exp, parse_one
+
 from parrant.models.schema import (
     ColumnLineage,
     OverrideDirective,
@@ -11,12 +14,12 @@ from parrant.models.schema import (
     UnresolvedColumnEdge,
 )
 from parrant.parser.sql_parser_utils import (
-    get_table_aliases,
-    get_lateral_flatten_aliases,
-    get_flatten_alias_nodes,
-    get_table_context,
     get_all_tables_from_select,
     get_final_selects,
+    get_flatten_alias_nodes,
+    get_lateral_flatten_aliases,
+    get_table_aliases,
+    get_table_context,
     split_qualified_name,
     strip_sql_comments,
 )
@@ -47,7 +50,7 @@ _ALIAS_AS_RE = re.compile(r"\bas\s+\"?(?P<a>[A-Za-z_]\w*)\"?", re.IGNORECASE)
 _TRAILING_IDENT_RE = re.compile(r'(?:"(?P<q>[^"]+)"|(?P<b>[A-Za-z_]\w*))\s*$')
 
 
-def _extract_select_alias(line: str) -> Optional[str]:
+def _extract_select_alias(line: str) -> str | None:
     """Best-effort pull of the projected column name from a SELECT-list line.
 
     Prefers the token after a case-insensitive `` as `` (the explicit alias); else the last
@@ -70,7 +73,7 @@ def _extract_select_alias(line: str) -> Optional[str]:
     return None
 
 
-def _adjacent_column(lines: List[str], pragma_idx: int) -> Optional[str]:
+def _adjacent_column(lines: list[str], pragma_idx: int) -> str | None:
     """Scan forward from the pragma line to the next non-blank, non-comment line and extract
     its projected column via :func:`_extract_select_alias`. Best-effort (``None`` => stale)."""
     for j in range(pragma_idx + 1, len(lines)):
@@ -81,7 +84,7 @@ def _adjacent_column(lines: List[str], pragma_idx: int) -> Optional[str]:
     return None
 
 
-def parse_override_directives(sql: str) -> Tuple[List[OverrideDirective], List[str]]:
+def parse_override_directives(sql: str) -> tuple[list[OverrideDirective], list[str]]:
     """Parse ``-- lineage:allow-(change|break) ...`` pragmas from raw head SQL.
 
     Returns ``(directives, warnings)``. A pragma is DROPPED (contributing a human warning
@@ -94,14 +97,14 @@ def parse_override_directives(sql: str) -> Tuple[List[OverrideDirective], List[s
         (``column`` may be ``None`` when adjacency can't resolve => the caller marks it stale).
     """
     lines = sql.splitlines()
-    first_select_idx: Optional[int] = None
+    first_select_idx: int | None = None
     for i, line in enumerate(lines):
         if _SELECT_WORD_RE.search(line):
             first_select_idx = i
             break
 
-    directives: List[OverrideDirective] = []
-    warnings: List[str] = []
+    directives: list[OverrideDirective] = []
+    warnings: list[str] = []
     for i, line in enumerate(lines):
         m = _OVERRIDE_LINE_RE.search(line)
         if not m:
@@ -127,7 +130,7 @@ def parse_override_directives(sql: str) -> Tuple[List[OverrideDirective], List[s
         # Look for column= OUTSIDE the quoted reason span (so reason="see column=x" is safe).
         args_wo_reason = args[: reason_match.start()] + args[reason_match.end() :]
         column_match = _COLUMN_ARG_RE.search(args_wo_reason)
-        column: Optional[str]
+        column: str | None
         scope: Literal["column", "model"]
         if column_match:
             column = column_match.group("val").lower()
@@ -154,22 +157,22 @@ def parse_override_directives(sql: str) -> Tuple[List[OverrideDirective], List[s
 class ParserContext:
     """Context object containing parser state and dependencies."""
 
-    aliases: Dict[str, str]
+    aliases: dict[str, str]
     table_context: str
-    cte_sources: Dict[str, Dict[str, str]]
-    cte_to_model: Optional[Dict[str, str]]
-    cte_transformation_types: Dict[str, Dict[str, str]] = field(default_factory=dict)
-    cte_sql_expressions: Dict[str, Dict[str, Optional[str]]] = field(default_factory=dict)
-    cte_base_tables: Dict[str, Set[str]] = field(default_factory=dict)
+    cte_sources: dict[str, dict[str, str]]
+    cte_to_model: dict[str, str] | None
+    cte_transformation_types: dict[str, dict[str, str]] = field(default_factory=dict)
+    cte_sql_expressions: dict[str, dict[str, str | None]] = field(default_factory=dict)
+    cte_base_tables: dict[str, set[str]] = field(default_factory=dict)
     # Additional per-column sources contributed by non-left UNION branches of a CTE.
     # cte_sources holds a single primary source per column; these are merged in on top
     # so a CTE built from a UNION is not reduced to only its left-most branch.
-    cte_extra_sources: Dict[str, Dict[str, Set[str]]] = field(default_factory=dict)
-    column_definitions: Optional[Dict[str, Any]] = None
+    cte_extra_sources: dict[str, dict[str, set[str]]] = field(default_factory=dict)
+    column_definitions: dict[str, Any] | None = None
 
 
 class CTEHandler:
-    def extract_cte_model_mappings_from_parsed(self, parsed: Any) -> Dict[str, str]:
+    def extract_cte_model_mappings_from_parsed(self, parsed: Any) -> dict[str, str]:
         mappings = {}
         for cte in parsed.find_all(exp.CTE):
             cte_name = cte.alias
@@ -183,9 +186,9 @@ class CTEHandler:
     def trace_base_tables(
         self,
         table: str,
-        cte_to_model: Optional[Dict[str, str]],
-        cte_sources: Dict[str, Dict[str, str]],
-        star_sources: Set[str],
+        cte_to_model: dict[str, str] | None,
+        cte_sources: dict[str, dict[str, str]],
+        star_sources: set[str],
     ) -> None:
         if cte_to_model is None:
             if table not in cte_sources:
@@ -209,21 +212,21 @@ class CTEHandler:
 
 class StarExpressionHandler:
     def __init__(self) -> None:
-        self._cte_handler: Optional[CTEHandler] = None
+        self._cte_handler: CTEHandler | None = None
 
     def is_star_expression(self, expr: Any) -> bool:
         return isinstance(expr, exp.Star) or (
             isinstance(expr, exp.Column) and getattr(expr, "is_star", False)
         )
 
-    def get_star_source_table(self, expr: Any, aliases: Dict[str, str], table_context: str) -> str:
+    def get_star_source_table(self, expr: Any, aliases: dict[str, str], table_context: str) -> str:
         if isinstance(expr, exp.Column) and expr.table:
             star_table_alias = str(expr.table)
             return aliases.get(star_table_alias, star_table_alias)
         else:
             return table_context
 
-    def get_excluded_columns(self, star_expr: exp.Star) -> List[str]:
+    def get_excluded_columns(self, star_expr: exp.Star) -> list[str]:
         excluded = []
         if hasattr(star_expr, "args") and "except" in star_expr.args:
             except_clause = star_expr.args["except"]
@@ -240,7 +243,7 @@ class StarExpressionHandler:
 
     def get_cte_transformation_info(
         self, context: ParserContext, cte_name: str, col_name: str
-    ) -> tuple[str, Optional[str]]:
+    ) -> tuple[str, str | None]:
         trans_type = context.cte_transformation_types.get(cte_name, {}).get(col_name, "direct")
         sql_expr = context.cte_sql_expressions.get(cte_name, {}).get(col_name)
         return trans_type, sql_expr
@@ -248,11 +251,11 @@ class StarExpressionHandler:
     def expand_from_join_tables(
         self,
         select: Any,
-        all_tables: List[str],
-        excluded_col_names: Set[str],
+        all_tables: list[str],
+        excluded_col_names: set[str],
         context: ParserContext,
-        columns: Dict[str, List[ColumnLineage]],
-        star_sources: Set[str],
+        columns: dict[str, list[ColumnLineage]],
+        star_sources: set[str],
     ) -> None:
         for join_table in all_tables:
             if join_table in context.cte_sources:
@@ -283,10 +286,10 @@ class StarExpressionHandler:
     def expand_from_cte(
         self,
         source_table: str,
-        excluded_col_names: Set[str],
+        excluded_col_names: set[str],
         context: ParserContext,
-        columns: Dict[str, List[ColumnLineage]],
-        star_sources: Set[str],
+        columns: dict[str, list[ColumnLineage]],
+        star_sources: set[str],
     ) -> bool:
         if source_table in context.cte_sources:
             if len(context.cte_sources[source_table]) > 0:
@@ -319,7 +322,7 @@ class StarExpressionHandler:
 class ExpressionAnalyzer:
     def __init__(self, parser: "SQLColumnParser") -> None:
         self.parser = parser
-        self._handlers: Dict[type, Callable[[Any, ParserContext, bool], List[ColumnLineage]]] = {}
+        self._handlers: dict[type, Callable[[Any, ParserContext, bool], list[ColumnLineage]]] = {}
         self._register_default_handlers()
 
     def _register_default_handlers(self) -> None:
@@ -327,13 +330,13 @@ class ExpressionAnalyzer:
         self.register_handler(exp.Column, self._handle_column)
 
     def register_handler(
-        self, expr_type: type, handler: Callable[[Any, ParserContext, bool], List[ColumnLineage]]
+        self, expr_type: type, handler: Callable[[Any, ParserContext, bool], list[ColumnLineage]]
     ) -> None:
         self._handlers[expr_type] = handler
 
     def analyze(
         self, expr: Any, context: ParserContext, is_aliased: bool = False
-    ) -> List[ColumnLineage]:
+    ) -> list[ColumnLineage]:
         expr_type = type(expr)
         if expr_type in self._handlers:
             return self._handlers[expr_type](expr, context, is_aliased)
@@ -341,12 +344,12 @@ class ExpressionAnalyzer:
 
     def _handle_alias(
         self, expr: exp.Alias, context: ParserContext, is_aliased: bool
-    ) -> List[ColumnLineage]:
+    ) -> list[ColumnLineage]:
         return self.analyze(expr.this, context, is_aliased=True)
 
     def _handle_column(
         self, expr: exp.Column, context: ParserContext, is_aliased: bool
-    ) -> List[ColumnLineage]:
+    ) -> list[ColumnLineage]:
         col_name = (
             str(expr.this).lower() if hasattr(expr, "this") and expr.this else str(expr).lower()
         )
@@ -359,7 +362,7 @@ class ExpressionAnalyzer:
 
         return self.parser._analyze_column_reference(expr, col_name, context, is_aliased)
 
-    def _default_handler(self, expr: Any, context: ParserContext) -> List[ColumnLineage]:
+    def _default_handler(self, expr: Any, context: ParserContext) -> list[ColumnLineage]:
         source_cols = self.parser._extract_source_columns(expr, context)
         normalized_source_cols = self.parser._normalize_source_columns(source_cols)
         return [
@@ -372,7 +375,7 @@ class ExpressionAnalyzer:
 
 
 class SQLColumnParser:
-    def __init__(self, dialect: Optional[str] = None):
+    def __init__(self, dialect: str | None = None):
         self.dialect = dialect
         self._cte_handler = CTEHandler()
         self._star_handler = StarExpressionHandler()
@@ -383,10 +386,10 @@ class SQLColumnParser:
         parsed = parse_one(sql, dialect=self.dialect)
         cte_to_model = self._cte_handler.extract_cte_model_mappings_from_parsed(parsed)
 
-        cte_transformation_types: Dict[str, Dict[str, str]] = {}
-        cte_sql_expressions: Dict[str, Dict[str, Optional[str]]] = {}
-        cte_base_tables: Dict[str, Set[str]] = {}
-        cte_extra_sources: Dict[str, Dict[str, Set[str]]] = {}
+        cte_transformation_types: dict[str, dict[str, str]] = {}
+        cte_sql_expressions: dict[str, dict[str, str | None]] = {}
+        cte_base_tables: dict[str, set[str]] = {}
+        cte_extra_sources: dict[str, dict[str, set[str]]] = {}
 
         aliases = get_table_aliases(parsed)
         for cte in parsed.find_all(exp.CTE):
@@ -401,11 +404,11 @@ class SQLColumnParser:
             cte_extra_sources,
         )
 
-        columns: Dict[str, List[ColumnLineage]] = {}
-        star_sources: Set[str] = set()
+        columns: dict[str, list[ColumnLineage]] = {}
+        star_sources: set[str] = set()
         # Unresolved-edge markers collected during this parse (see UnresolvedColumnEdge).
         # ``model`` is left empty; the registry stamps the real node name.
-        markers: List[UnresolvedColumnEdge] = []
+        markers: list[UnresolvedColumnEdge] = []
         flatten_aliases = get_lateral_flatten_aliases(parsed)
         # flatten pseudo-alias -> the REAL upstream source columns of the expression it unnests
         # (e.g. `flatten(payload:items) f` -> {`raw_events.payload`}). Lets a downstream
@@ -425,7 +428,7 @@ class SQLColumnParser:
 
         final_selects = get_final_selects(parsed)
         if not final_selects:
-            selects_to_process: List[Any] = list(parsed.find_all(exp.Select))
+            selects_to_process: list[Any] = list(parsed.find_all(exp.Select))
         else:
             selects_to_process = list(final_selects)
             # `select * from <cte>`: expand the CTE's own SELECT(s). Using
@@ -559,10 +562,10 @@ class SQLColumnParser:
         )
 
     @staticmethod
-    def _dedupe_markers(markers: List[UnresolvedColumnEdge]) -> List[UnresolvedColumnEdge]:
+    def _dedupe_markers(markers: list[UnresolvedColumnEdge]) -> list[UnresolvedColumnEdge]:
         """Order-stable de-duplication of markers (same column/reason/detail collapse to one)."""
-        seen: Set[Tuple[str, str, Optional[str]]] = set()
-        unique: List[UnresolvedColumnEdge] = []
+        seen: set[tuple[str, str, str | None]] = set()
+        unique: list[UnresolvedColumnEdge] = []
         for marker in markers:
             key = (marker.column, marker.reason, marker.detail)
             if key not in seen:
@@ -571,7 +574,7 @@ class SQLColumnParser:
         return unique
 
     def _emit_star_rename_markers(
-        self, star_expr: exp.Star, markers: List[UnresolvedColumnEdge]
+        self, star_expr: exp.Star, markers: list[UnresolvedColumnEdge]
     ) -> None:
         """Declare each ``select * rename (old as new)`` output as an unresolved edge.
 
@@ -601,10 +604,10 @@ class SQLColumnParser:
 
     def _declare_phantom_edges(
         self,
-        columns: Dict[str, List[ColumnLineage]],
-        flatten_aliases: Set[str],
-        flatten_alias_sources: Dict[str, Set[str]],
-        markers: List[UnresolvedColumnEdge],
+        columns: dict[str, list[ColumnLineage]],
+        flatten_aliases: set[str],
+        flatten_alias_sources: dict[str, set[str]],
+        markers: list[UnresolvedColumnEdge],
     ) -> None:
         """Resolve or declare fabricated source tokens on every resolved column.
 
@@ -627,7 +630,7 @@ class SQLColumnParser:
         """
         for out_col, lineages in columns.items():
             for lineage in lineages:
-                kept: Set[str] = set()
+                kept: set[str] = set()
                 for token in lineage.source_columns:
                     reason = self._phantom_token_reason(token, flatten_aliases)
                     if reason is None:
@@ -646,7 +649,7 @@ class SQLColumnParser:
                 lineage.source_columns = kept
 
     @staticmethod
-    def _resolve_flatten_token(token: str, flatten_alias_sources: Dict[str, Set[str]]) -> Set[str]:
+    def _resolve_flatten_token(token: str, flatten_alias_sources: dict[str, set[str]]) -> set[str]:
         """Return the real upstream columns a flatten-qualified token (``f.value``) derives from.
 
         ``f`` is looked up in the flatten-alias -> flattened-source map. An empty result means the
@@ -658,13 +661,13 @@ class SQLColumnParser:
     def _build_flatten_alias_sources(
         self,
         parsed: Any,
-        cte_to_model: Optional[Dict[str, str]],
-        cte_sources: Dict[str, Dict[str, str]],
-        cte_transformation_types: Dict[str, Dict[str, str]],
-        cte_sql_expressions: Dict[str, Dict[str, Optional[str]]],
-        cte_base_tables: Dict[str, Set[str]],
-        cte_extra_sources: Dict[str, Dict[str, Set[str]]],
-    ) -> Dict[str, Set[str]]:
+        cte_to_model: dict[str, str] | None,
+        cte_sources: dict[str, dict[str, str]],
+        cte_transformation_types: dict[str, dict[str, str]],
+        cte_sql_expressions: dict[str, dict[str, str | None]],
+        cte_base_tables: dict[str, set[str]],
+        cte_extra_sources: dict[str, dict[str, set[str]]],
+    ) -> dict[str, set[str]]:
         """Map each flatten pseudo-alias to the real upstream columns of the expression it unnests.
 
         For every ``flatten(<expr>) alias`` in the query, resolve ``<expr>``'s columns through the
@@ -678,7 +681,7 @@ class SQLColumnParser:
         alias whose expression traces to nothing real (a literal array, an untraceable path) maps
         to the empty set, which keeps the honest ``phantom_alias`` marker downstream.
         """
-        raw_sources: Dict[str, Set[str]] = {}
+        raw_sources: dict[str, set[str]] = {}
         for alias, flattened_expr, select in get_flatten_alias_nodes(parsed):
             if select is None:
                 raw_sources.setdefault(alias, set())
@@ -688,7 +691,7 @@ class SQLColumnParser:
             # Populate column_definitions so forward-reference resolution follows such a derived
             # column to its REAL upstream source instead of fabricating a same-name column on the
             # base relation.
-            column_definitions: Dict[str, Any] = {}
+            column_definitions: dict[str, Any] = {}
             for projected in select.expressions:
                 projected_name = strip_sql_comments(projected.alias_or_name).lower()
                 column_definitions[projected_name] = projected
@@ -708,7 +711,7 @@ class SQLColumnParser:
             # honest here — both are genuine flattened sources; dropping one would hide an edge).
             raw_sources.setdefault(alias, set()).update(resolved)
 
-        expanded: Dict[str, Set[str]] = {}
+        expanded: dict[str, set[str]] = {}
         for alias in raw_sources:
             expanded[alias] = self._expand_flatten_sources(alias, raw_sources, set())
         return expanded
@@ -716,14 +719,14 @@ class SQLColumnParser:
     def _expand_flatten_sources(
         self,
         alias: str,
-        raw_sources: Dict[str, Set[str]],
-        visiting: Set[str],
-    ) -> Set[str]:
+        raw_sources: dict[str, set[str]],
+        visiting: set[str],
+    ) -> set[str]:
         """Transitively resolve a flatten alias's sources, replacing nested-flatten qualifiers."""
         if alias in visiting:
             return set()
         visiting.add(alias)
-        out: Set[str] = set()
+        out: set[str] = set()
         for token in raw_sources.get(alias, set()):
             table_part, _ = split_qualified_name(token)
             qualifier = table_part.strip().strip('"').lower() if table_part else ""
@@ -735,7 +738,9 @@ class SQLColumnParser:
         return out
 
     @staticmethod
-    def _phantom_token_reason(token: str, flatten_aliases: Set[str]) -> Optional[str]:
+    def _phantom_token_reason(
+        token: str, flatten_aliases: set[str]
+    ) -> Literal["pivot_output", "phantom_alias"] | None:
         """Classify a source token as a fabricated edge, or ``None`` if it is genuine.
 
         Returns ``"pivot_output"`` for a quoted pivot literal, ``"phantom_alias"`` for a
@@ -754,12 +759,12 @@ class SQLColumnParser:
     def _extract_predicate_lineage(
         self,
         parsed: Any,
-        cte_to_model: Optional[Dict[str, str]],
-        cte_sources: Dict[str, Dict[str, str]],
-        cte_transformation_types: Dict[str, Dict[str, str]],
-        cte_sql_expressions: Dict[str, Dict[str, Optional[str]]],
-        cte_base_tables: Dict[str, Set[str]],
-    ) -> Dict[str, str]:
+        cte_to_model: dict[str, str] | None,
+        cte_sources: dict[str, dict[str, str]],
+        cte_transformation_types: dict[str, dict[str, str]],
+        cte_sql_expressions: dict[str, dict[str, str | None]],
+        cte_base_tables: dict[str, set[str]],
+    ) -> dict[str, str]:
         """Resolve upstream columns referenced only in predicate clauses, with the condition.
 
         Column-value lineage is built from the projected ``SELECT`` list, so a column a
@@ -771,7 +776,7 @@ class SQLColumnParser:
         a predicate on a CTE that wraps an upstream model resolves to that model's column.
         The returned map is ``upstream_column -> predicate condition text`` (the "why").
         """
-        conditions_by_source: Dict[str, Set[str]] = {}
+        conditions_by_source: dict[str, set[str]] = {}
 
         for select in parsed.find_all(exp.Select):
             context = ParserContext(
@@ -785,7 +790,7 @@ class SQLColumnParser:
                 column_definitions={},
             )
 
-            conditions: List[Any] = []
+            conditions: list[Any] = []
             for key in ("where", "having", "qualify"):
                 wrapper = select.args.get(key)
                 if wrapper is not None:
@@ -820,7 +825,7 @@ class SQLColumnParser:
             for source, conditions in conditions_by_source.items()
         }
 
-    def _extract_cte_model_mappings(self, sql: str) -> Dict[str, str]:
+    def _extract_cte_model_mappings(self, sql: str) -> dict[str, str]:
         """Extract mappings from CTE names to model names (legacy method using regex)."""
         mappings = {}
         # Pattern to handle:
@@ -837,7 +842,7 @@ class SQLColumnParser:
 
         return mappings
 
-    def _normalize_table_ref(self, column: str, aliases: Dict[str, str], table_context: str) -> str:
+    def _normalize_table_ref(self, column: str, aliases: dict[str, str], table_context: str) -> str:
         column = strip_sql_comments(column)
         table_part, col = split_qualified_name(column)
         if not table_part:
@@ -848,13 +853,13 @@ class SQLColumnParser:
     def _build_cte_sources(
         self,
         parsed: Any,
-        cte_to_model: Optional[Dict[str, str]],
-        cte_transformation_types: Dict[str, Dict[str, str]],
-        cte_sql_expressions: Dict[str, Dict[str, Optional[str]]],
-        cte_base_tables: Dict[str, Set[str]],
-        cte_extra_sources: Dict[str, Dict[str, Set[str]]],
-    ) -> Dict[str, Dict[str, str]]:
-        cte_sources: Dict[str, Dict[str, str]] = {}
+        cte_to_model: dict[str, str] | None,
+        cte_transformation_types: dict[str, dict[str, str]],
+        cte_sql_expressions: dict[str, dict[str, str | None]],
+        cte_base_tables: dict[str, set[str]],
+        cte_extra_sources: dict[str, dict[str, set[str]]],
+    ) -> dict[str, dict[str, str]]:
+        cte_sources: dict[str, dict[str, str]] = {}
 
         for cte in parsed.find_all(exp.CTE):
             cte_name = cte.alias
@@ -940,7 +945,7 @@ class SQLColumnParser:
         self,
         expr: Any,
         select: Any,
-        aliases: Dict[str, str],
+        aliases: dict[str, str],
         table_context: str,
     ) -> str:
         if isinstance(expr, exp.Column) and expr.table:
@@ -973,7 +978,7 @@ class SQLColumnParser:
         self,
         from_table: str,
         cte_name: str,
-        excluded_col_names: Set[str],
+        excluded_col_names: set[str],
         context: ParserContext,
     ) -> None:
         if from_table in context.cte_sources:
@@ -1017,8 +1022,8 @@ class SQLColumnParser:
         self,
         column: str,
         table: str,
-        cte_sources: Dict[str, Dict[str, str]],
-        cte_to_model: Optional[Dict[str, str]] = None,
+        cte_sources: dict[str, dict[str, str]],
+        cte_to_model: dict[str, str] | None = None,
     ) -> str:
         column = strip_sql_comments(column)
         table_part, col_name = split_qualified_name(column)
@@ -1043,7 +1048,7 @@ class SQLColumnParser:
             return f"{table}.{col_name_lower}"
         return column
 
-    def _resolve_base_table(self, table: str, cte_to_model: Dict[str, str]) -> str:
+    def _resolve_base_table(self, table: str, cte_to_model: dict[str, str]) -> str:
         """Follow cte_to_model transitively until reaching a table that is not a CTE.
 
         A single cte_to_model lookup can land on another CTE alias (e.g. a chain of
@@ -1053,7 +1058,7 @@ class SQLColumnParser:
         infinite loops on recursive/self-referential mappings.
         """
         current = table
-        visited: Set[str] = set()
+        visited: set[str] = set()
         while current in cte_to_model and current not in visited:
             visited.add(current)
             next_table = cte_to_model[current]
@@ -1067,7 +1072,7 @@ class SQLColumnParser:
         expr: exp.Column,
         col_name: str,
         context: ParserContext,
-    ) -> Optional[List[ColumnLineage]]:
+    ) -> list[ColumnLineage] | None:
         is_qualified = bool(expr.table)
         if (
             not is_qualified
@@ -1096,11 +1101,11 @@ class SQLColumnParser:
         col_name: str,
         context: ParserContext,
         is_aliased: bool,
-    ) -> List[ColumnLineage]:
+    ) -> list[ColumnLineage]:
         source_col = self._normalize_table_ref(
             strip_sql_comments(str(expr)), context.aliases, context.table_context
         )
-        table_part, col = split_qualified_name(source_col)
+        table_part, _col = split_qualified_name(source_col)
         table = table_part if table_part else context.table_context
         resolved_source = self._resolve_column_source(
             source_col, table, context.cte_sources, context.cte_to_model
@@ -1136,9 +1141,9 @@ class SQLColumnParser:
         ]
 
     def _normalize_extra_cte_sources(
-        self, extras_for_table: Dict[str, Set[str]], col_name: str
-    ) -> Set[str]:
-        normalized: Set[str] = set()
+        self, extras_for_table: dict[str, set[str]], col_name: str
+    ) -> set[str]:
+        normalized: set[str] = set()
         for extra in extras_for_table.get(col_name, set()):
             extra_table, extra_col = split_qualified_name(extra)
             if extra_table:
@@ -1147,7 +1152,7 @@ class SQLColumnParser:
                 normalized.add(extra_col.lower())
         return normalized
 
-    def _normalize_source_columns(self, source_cols: Set[str]) -> Set[str]:
+    def _normalize_source_columns(self, source_cols: set[str]) -> set[str]:
         """Normalize source columns, ensuring all are cleaned of comments and lowercase."""
         normalized = set()
         for s in source_cols:
@@ -1164,8 +1169,8 @@ class SQLColumnParser:
         col: exp.Column,
         col_name: str,
         context: ParserContext,
-        visited_forward_refs: Set[str],
-    ) -> Optional[Set[str]]:
+        visited_forward_refs: set[str],
+    ) -> set[str] | None:
         is_qualified = bool(col.table)
         if (
             not is_qualified
@@ -1189,8 +1194,8 @@ class SQLColumnParser:
         self,
         expr: Any,
         context: ParserContext,
-        visited_forward_refs: Optional[Set[str]] = None,
-    ) -> Set[str]:
+        visited_forward_refs: set[str] | None = None,
+    ) -> set[str]:
         if visited_forward_refs is None:
             visited_forward_refs = set()
 

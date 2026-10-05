@@ -1,4 +1,4 @@
-""" support — in-memory warehouse metadata + the card/snippet corpus.
+"""support — in-memory warehouse metadata + the card/snippet corpus.
 
 :class:`WarehouseMeta` turns Metabase's bulk ``GET /api/database/:id/metadata`` into fast
 lookups both resolvers need: Table/Field **id** → warehouse relation/column (for MBQL) and
@@ -10,8 +10,6 @@ expand ``{{#card}}`` / ``{{snippet}}`` template tags transitively (with a cycle 
 """
 
 from __future__ import annotations
-
-from typing import Dict, List, Optional, Tuple
 
 from parrant.models.schema import MetabaseRelation
 
@@ -43,18 +41,18 @@ class WarehouseMeta:
     """Resolved Metabase warehouse metadata across one or more databases."""
 
     def __init__(self) -> None:
-        self.relations: Dict[str, MetabaseRelation] = {}
+        self.relations: dict[str, MetabaseRelation] = {}
         # Field id -> (relation_key, column_name)
-        self._field_by_id: Dict[int, Tuple[str, str]] = {}
+        self._field_by_id: dict[int, tuple[str, str]] = {}
         # Table id -> relation_key
-        self._table_by_id: Dict[int, str] = {}
+        self._table_by_id: dict[int, str] = {}
         # name lookups: "table", "schema.table", "db.schema.table" -> relation_key
-        self._by_name: Dict[str, str] = {}
+        self._by_name: dict[str, str] = {}
         # name collisions on the bare-table key: once ambiguous, never guess (drop it)
         self._ambiguous_names: set = set()
 
     @classmethod
-    def from_database_metadata(cls, metadatas: List[dict]) -> "WarehouseMeta":
+    def from_database_metadata(cls, metadatas: list[dict]) -> WarehouseMeta:
         """Build from a list of ``/api/database/:id/metadata`` response bodies."""
         meta = cls()
         for metadata in metadatas:
@@ -101,16 +99,16 @@ class WarehouseMeta:
         self._by_name[name] = key
 
     # --- id lookups (MBQL) ------------------------------------------------
-    def field(self, field_id: int) -> Optional[Tuple[str, str]]:
+    def field(self, field_id: int) -> tuple[str, str] | None:
         """``field_id`` → ``(relation_key, column)`` or ``None`` if unknown."""
         return self._field_by_id.get(field_id)
 
-    def table(self, table_id: int) -> Optional[str]:
+    def table(self, table_id: int) -> str | None:
         """``table_id`` → relation_key or ``None`` if unknown."""
         return self._table_by_id.get(table_id)
 
     # --- name lookups (native SQL) ----------------------------------------
-    def resolve_name(self, raw_name: str) -> Optional[str]:
+    def resolve_name(self, raw_name: str) -> str | None:
         """Resolve a SQL table reference to a relation_key.
 
         Tries the fully-qualified name first, then ``schema.table``, then the bare table
@@ -130,29 +128,29 @@ class WarehouseMeta:
                 return key
         return None
 
-    def relation(self, key: str) -> Optional[MetabaseRelation]:
+    def relation(self, key: str) -> MetabaseRelation | None:
         return self.relations.get(key)
 
 
 class CardCorpus:
     """Every fetched card + snippet, indexed for transitive template-tag expansion."""
 
-    def __init__(self, cards: List[dict], snippets: List[dict]) -> None:
-        self.cards_by_id: Dict[int, dict] = {
+    def __init__(self, cards: list[dict], snippets: list[dict]) -> None:
+        self.cards_by_id: dict[int, dict] = {
             c["id"]: c for c in cards if isinstance(c.get("id"), int)
         }
-        self.snippets_by_id: Dict[int, dict] = {
+        self.snippets_by_id: dict[int, dict] = {
             s["id"]: s for s in snippets if isinstance(s.get("id"), int)
         }
-        self.snippets_by_name: Dict[str, dict] = {
+        self.snippets_by_name: dict[str, dict] = {
             str(s.get("name", "")).lower(): s for s in snippets if s.get("name")
         }
 
-    def card(self, card_id: int) -> Optional[dict]:
+    def card(self, card_id: int) -> dict | None:
         return self.cards_by_id.get(card_id)
 
-    def snippet_by_id(self, snippet_id: int) -> Optional[dict]:
+    def snippet_by_id(self, snippet_id: int) -> dict | None:
         return self.snippets_by_id.get(snippet_id)
 
-    def snippet_by_name(self, name: str) -> Optional[dict]:
+    def snippet_by_name(self, name: str) -> dict | None:
         return self.snippets_by_name.get(name.lower())
